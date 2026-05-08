@@ -1449,9 +1449,12 @@ impl Config {
             .to_compact_string()
     }
 
-    pub async fn ensure_network(&self, client: &bollard::Docker) -> Result<(), anyhow::Error> {
+    pub async fn ensure_docker_network(
+        &self,
+        client: &bollard::Docker,
+    ) -> Result<(), anyhow::Error> {
         let network = client
-            .inspect_network::<String>(&self.docker.network.name, None)
+            .inspect_network(&self.docker.network.name, None)
             .await;
 
         if network.is_err() {
@@ -1460,12 +1463,12 @@ impl Config {
                 config: &Config,
             ) -> Result<(), bollard::errors::Error> {
                 client
-                    .create_network(bollard::network::CreateNetworkOptions {
-                        name: config.docker.network.name.as_str(),
-                        driver: config.docker.network.driver.as_str(),
-                        enable_ipv6: true,
-                        internal: config.docker.network.is_internal,
-                        ipam: bollard::models::Ipam {
+                    .create_network(bollard::plugin::NetworkCreateRequest {
+                        name: config.docker.network.name.to_string(),
+                        driver: Some(config.docker.network.driver.to_string()),
+                        enable_ipv6: Some(true),
+                        internal: Some(config.docker.network.is_internal),
+                        ipam: Some(bollard::models::Ipam {
                             config: Some(vec![
                                 bollard::models::IpamConfig {
                                     subnet: Some(
@@ -1487,25 +1490,34 @@ impl Config {
                                 },
                             ]),
                             ..Default::default()
-                        },
-                        options: HashMap::from([
-                            ("encryption", "false"),
-                            ("com.docker.network.bridge.default_bridge", "false"),
+                        }),
+                        options: Some(HashMap::from([
+                            ("encryption".to_string(), "false".to_string()),
                             (
-                                "com.docker.network.bridge.enable_icc",
-                                &config.docker.network.enable_icc.to_string(),
-                            ),
-                            ("com.docker.network.bridge.enable_ip_masquerade", "true"),
-                            ("com.docker.network.bridge.host_binding_ipv4", "0.0.0.0"),
-                            (
-                                "com.docker.network.bridge.name",
-                                &config.docker.network.name,
+                                "com.docker.network.bridge.default_bridge".to_string(),
+                                "false".to_string(),
                             ),
                             (
-                                "com.docker.network.driver.mtu",
-                                &config.docker.network.network_mtu.to_string(),
+                                "com.docker.network.bridge.enable_icc".to_string(),
+                                config.docker.network.enable_icc.to_string(),
                             ),
-                        ]),
+                            (
+                                "com.docker.network.bridge.enable_ip_masquerade".to_string(),
+                                "true".to_string(),
+                            ),
+                            (
+                                "com.docker.network.bridge.host_binding_ipv4".to_string(),
+                                "0.0.0.0".to_string(),
+                            ),
+                            (
+                                "com.docker.network.bridge.name".to_string(),
+                                config.docker.network.name.to_string(),
+                            ),
+                            (
+                                "com.docker.network.driver.mtu".to_string(),
+                                config.docker.network.network_mtu.to_string(),
+                            ),
+                        ])),
                         ..Default::default()
                     })
                     .await?;

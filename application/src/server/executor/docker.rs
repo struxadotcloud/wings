@@ -1,14 +1,3 @@
-use bollard::{
-    Docker,
-    container::{
-        AttachContainerOptions, CreateContainerOptions, KillContainerOptions,
-        ListContainersOptions, LogsOptions, MemoryStatsStats, RemoveContainerOptions, StatsOptions,
-        StopContainerOptions,
-    },
-    image::ListImagesOptions,
-    models::{Mount, MountTypeEnum},
-    secret::{ContainerStateStatusEnum, HostConfig, HostConfigLogConfig},
-};
 use futures::StreamExt;
 use rand::distr::SampleString;
 use std::{
@@ -38,7 +27,7 @@ trait DockerServerConfigurationExt {
         &self,
         config: &crate::config::Config,
         filesystem: &crate::server::filesystem::Filesystem,
-    ) -> Vec<Mount>;
+    ) -> Vec<bollard::plugin::Mount>;
 
     #[cfg(unix)]
     fn convert_devices(&self) -> Vec<bollard::models::DeviceMapping>;
@@ -48,18 +37,18 @@ trait DockerServerConfigurationExt {
         &self,
         config: &crate::config::Config,
     ) -> bollard::models::PortMap;
-    fn convert_allocations_exposed(&self) -> std::collections::HashMap<String, HashMap<(), ()>>;
+    fn convert_allocations_exposed(&self) -> Vec<String>;
 
     async fn container_config(
         &self,
         config: &crate::config::Config,
         client: &bollard::Docker,
         filesystem: &crate::server::filesystem::Filesystem,
-    ) -> bollard::container::Config<String>;
+    ) -> bollard::plugin::ContainerCreateBody;
     fn container_update_config(
         &self,
         config: &crate::config::Config,
-    ) -> bollard::container::UpdateContainerOptions<String>;
+    ) -> bollard::plugin::ContainerUpdateBody;
 
     fn installer_resources(&self, config: &crate::config::Config) -> bollard::models::Resources;
 }
@@ -75,7 +64,7 @@ impl DockerServerConfigurationExt for crate::server::configuration::ServerConfig
             .await
             .into_iter()
             .map(|mount| bollard::models::Mount {
-                typ: Some(bollard::secret::MountTypeEnum::BIND),
+                typ: Some(bollard::plugin::MountType::BIND),
                 target: Some(mount.target.into()),
                 source: Some(mount.source.into()),
                 read_only: Some(mount.read_only),
@@ -161,19 +150,17 @@ impl DockerServerConfigurationExt for crate::server::configuration::ServerConfig
         map
     }
 
-    fn convert_allocations_exposed(&self) -> std::collections::HashMap<String, HashMap<(), ()>> {
-        let mut map = HashMap::new();
+    fn convert_allocations_exposed(&self) -> Vec<String> {
+        let mut exposed = Vec::new();
 
         for ports in self.allocations.mappings.values() {
             for port in ports {
-                map.entry(format!("{port}/tcp"))
-                    .or_insert_with(HashMap::new);
-                map.entry(format!("{port}/udp"))
-                    .or_insert_with(HashMap::new);
+                exposed.push(format!("{port}/tcp"));
+                exposed.push(format!("{port}/udp"));
             }
         }
 
-        map
+        exposed
     }
 
     async fn container_config(
@@ -181,7 +168,7 @@ impl DockerServerConfigurationExt for crate::server::configuration::ServerConfig
         config: &crate::config::Config,
         client: &bollard::Docker,
         filesystem: &crate::server::filesystem::Filesystem,
-    ) -> bollard::container::Config<String> {
+    ) -> bollard::plugin::ContainerCreateBody {
         let mut labels = self.labels.clone();
         labels.insert("Service".into(), config.app_name.clone());
         labels.insert("ContainerType".into(), "server_process".into());
@@ -191,23 +178,26 @@ impl DockerServerConfigurationExt for crate::server::configuration::ServerConfig
         {
             let network_name = format!("ip-{}", default.ip.replace('.', "-").replace(':', "--"));
 
-            if client
-                .inspect_network::<String>(&network_name, None)
-                .await
-                .is_err()
+            if client.inspect_network(&network_name, None).await.is_err()
                 && let Err(err) = client
-                    .create_network(bollard::network::CreateNetworkOptions {
-                        name: network_name.as_str(),
-                        driver: "bridge",
-                        enable_ipv6: false,
-                        internal: false,
-                        attachable: false,
-                        ingress: false,
-                        options: HashMap::from([
-                            ("encryption", "false"),
-                            ("com.docker.network.bridge.default_bridge", "false"),
-                            ("com.docker.network.host_ipv4", &default.ip),
-                        ]),
+                    .create_network(bollard::plugin::NetworkCreateRequest {
+                        name: network_name.to_string(),
+                        driver: Some("bridge".to_string()),
+                        enable_ipv6: Some(false),
+                        internal: Some(false),
+                        attachable: Some(false),
+                        ingress: Some(false),
+                        options: Some(HashMap::from([
+                            ("encryption".to_string(), "false".to_string()),
+                            (
+                                "com.docker.network.bridge.default_bridge".to_string(),
+                                "false".to_string(),
+                            ),
+                            (
+                                "com.docker.network.host_ipv4".to_string(),
+                                default.ip.to_string(),
+                            ),
+                        ])),
                         ..Default::default()
                     })
                     .await
@@ -227,9 +217,9 @@ impl DockerServerConfigurationExt for crate::server::configuration::ServerConfig
 
         let resources = self.convert_container_resources(config);
 
-        bollard::container::Config {
+        bollard::plugin::ContainerCreateBody {
             exposed_ports: Some(self.convert_allocations_exposed()),
-            host_config: Some(bollard::secret::HostConfig {
+            host_config: Some(bollard::plugin::HostConfig {
                 memory: resources.memory,
                 memory_reservation: resources.memory_reservation,
                 memory_swap: resources.memory_swap,
@@ -251,7 +241,7 @@ impl DockerServerConfigurationExt for crate::server::configuration::ServerConfig
                     "/tmp".to_string(),
                     format!("rw,exec,nosuid,size={}M", config.docker.tmpfs_size),
                 )])),
-                log_config: Some(bollard::secret::HostConfigLogConfig {
+                log_config: Some(bollard::plugin::HostConfigLogConfig {
                     typ: Some(config.docker.log_config.r#type.clone()),
                     config: Some(
                         config
@@ -317,16 +307,16 @@ impl DockerServerConfigurationExt for crate::server::configuration::ServerConfig
     fn container_update_config(
         &self,
         config: &crate::config::Config,
-    ) -> bollard::container::UpdateContainerOptions<String> {
+    ) -> bollard::plugin::ContainerUpdateBody {
         let resources = self.convert_container_resources(config);
 
-        bollard::container::UpdateContainerOptions {
+        bollard::plugin::ContainerUpdateBody {
             memory: resources.memory,
             memory_reservation: resources.memory_reservation,
             memory_swap: resources.memory_swap,
             cpu_quota: resources.cpu_quota,
             cpu_period: resources.cpu_period,
-            cpu_shares: resources.cpu_shares.map(|s| s as isize),
+            cpu_shares: resources.cpu_shares,
             cpuset_cpus: resources.cpuset_cpus,
             pids_limit: resources.pids_limit,
             blkio_weight: resources.blkio_weight,
@@ -361,12 +351,12 @@ impl DockerServerConfigurationExt for crate::server::configuration::ServerConfig
 }
 
 pub struct DockerExecutor {
-    docker: Arc<Docker>,
+    docker: Arc<bollard::Docker>,
     app_config: Arc<crate::config::Config>,
 }
 
 impl DockerExecutor {
-    pub fn new(docker: Arc<Docker>, app_config: Arc<crate::config::Config>) -> Self {
+    pub fn new(docker: Arc<bollard::Docker>, app_config: Arc<crate::config::Config>) -> Self {
         Self { docker, app_config }
     }
 
@@ -402,9 +392,9 @@ impl DockerExecutor {
         let (image_name, tag) = image.split_once(':').unwrap_or((image, "latest"));
 
         let mut stream = self.docker.create_image(
-            Some(bollard::image::CreateImageOptions {
-                from_image: image_name,
-                tag,
+            Some(bollard::query_parameters::CreateImageOptions {
+                from_image: Some(image_name.to_string()),
+                tag: Some(tag.to_string()),
                 ..Default::default()
             }),
             None,
@@ -506,12 +496,12 @@ impl DockerExecutor {
 
                     let exists = self
                         .docker
-                        .list_images(Some(ListImagesOptions::<String> {
+                        .list_images(Some(bollard::query_parameters::ListImagesOptions {
                             all: true,
-                            filters: HashMap::from([(
+                            filters: Some(HashMap::from([(
                                 "reference".to_string(),
                                 vec![image_name.to_string()],
-                            )]),
+                            )])),
                             ..Default::default()
                         }))
                         .await
@@ -573,7 +563,7 @@ impl tokio::io::AsyncRead for LogsReader {
 
 struct DockerProcessHandle {
     container_id: String,
-    docker: Arc<Docker>,
+    docker: Arc<bollard::Docker>,
     server: Weak<super::super::InnerServer>,
     app_config: Arc<crate::config::Config>,
 
@@ -590,7 +580,7 @@ struct DockerProcessHandle {
 impl DockerProcessHandle {
     async fn new(
         container_id: String,
-        docker: Arc<Docker>,
+        docker: Arc<bollard::Docker>,
         server: &super::super::Server,
         app_config: Arc<crate::config::Config>,
         status_tx: tokio::sync::mpsc::Sender<(
@@ -609,13 +599,13 @@ impl DockerProcessHandle {
         }));
 
         let mut attach = docker
-            .attach_container::<String>(
+            .attach_container(
                 &container_id,
-                Some(AttachContainerOptions {
-                    stdin: Some(true),
-                    stdout: Some(true),
-                    stderr: Some(true),
-                    stream: Some(true),
+                Some(bollard::query_parameters::AttachContainerOptions {
+                    stdin: true,
+                    stdout: true,
+                    stderr: true,
+                    stream: true,
                     ..Default::default()
                 }),
             )
@@ -749,7 +739,7 @@ impl DockerProcessHandle {
 
             let mut stream = stats_docker.stats(
                 &stats_id,
-                Some(StatsOptions {
+                Some(bollard::query_parameters::StatsOptions {
                     stream: true,
                     one_shot: false,
                 }),
@@ -763,62 +753,65 @@ impl DockerProcessHandle {
 
                 let mut usage = stats_usage.write().await;
 
-                let mut memory_bytes = stats.memory_stats.usage.unwrap_or(0);
-                if let Some(MemoryStatsStats::V1(m)) = &stats.memory_stats.stats
-                    && m.total_inactive_file < memory_bytes
-                {
-                    memory_bytes -= m.total_inactive_file;
-                }
-                if let Some(MemoryStatsStats::V2(m)) = &stats.memory_stats.stats
-                    && m.inactive_file < memory_bytes
-                {
-                    memory_bytes -= m.inactive_file;
+                if let Some(memory_stats) = &stats.memory_stats {
+                    let mut memory_bytes = memory_stats.usage.unwrap_or(0);
+
+                    if let Some(stats) = &memory_stats.stats {
+                        if let Some(&inactive_file) = stats.get("total_inactive_file")
+                            && inactive_file < memory_bytes
+                        {
+                            memory_bytes -= inactive_file;
+                        } else if let Some(&inactive_file) = stats.get("inactive_file")
+                            && inactive_file < memory_bytes
+                        {
+                            memory_bytes -= inactive_file;
+                        }
+                    }
+
+                    usage.memory_bytes = memory_bytes;
+                    usage.memory_limit_bytes = memory_stats.limit.unwrap_or(0);
                 }
 
-                usage.memory_bytes = memory_bytes;
-                usage.memory_limit_bytes = stats.memory_stats.limit.unwrap_or(0);
                 usage.disk_bytes = disk_bytes;
                 usage.state = stats_server.state.get_state();
 
                 if let Some(networks) = &stats.networks
                     && let Some(net) = networks.values().next()
                 {
-                    usage.network.rx_bytes = net.rx_bytes;
-                    usage.network.tx_bytes = net.tx_bytes;
+                    usage.network.rx_bytes = net.rx_bytes.unwrap_or(0);
+                    usage.network.tx_bytes = net.tx_bytes.unwrap_or(0);
                 }
 
-                usage.cpu_absolute = {
-                    let cpu_delta = stats
-                        .cpu_stats
-                        .cpu_usage
-                        .total_usage
-                        .saturating_sub(prev_cpu.0) as f64;
-                    let sys_delta = stats
-                        .cpu_stats
-                        .system_cpu_usage
-                        .unwrap_or(0)
-                        .saturating_sub(prev_cpu.1) as f64;
-                    let cpus = stats.cpu_stats.online_cpus.unwrap_or_else(|| {
-                        stats
-                            .cpu_stats
-                            .cpu_usage
-                            .percpu_usage
-                            .as_deref()
-                            .unwrap_or(&[])
-                            .len() as u64
-                    }) as f64;
+                if let Some(cpu_stats) = &stats.cpu_stats
+                    && let Some(cpu_usage) = &cpu_stats.cpu_usage
+                {
+                    usage.cpu_absolute = {
+                        let cpu_delta = cpu_usage
+                            .total_usage
+                            .unwrap_or(0)
+                            .saturating_sub(prev_cpu.0)
+                            as f64;
+                        let sys_delta = cpu_stats
+                            .system_cpu_usage
+                            .unwrap_or(0)
+                            .saturating_sub(prev_cpu.1)
+                            as f64;
+                        let cpus = cpu_stats.online_cpus.unwrap_or_else(|| {
+                            cpu_usage.percpu_usage.as_deref().unwrap_or(&[]).len() as u32
+                        }) as f64;
 
-                    if sys_delta > 0.0 && cpu_delta > 0.0 && cpus > 0.0 {
-                        ((cpu_delta / sys_delta) * 100.0 * cpus * 1000.0).round() / 1000.0
-                    } else {
-                        0.0
-                    }
-                };
+                        if sys_delta > 0.0 && cpu_delta > 0.0 && cpus > 0.0 {
+                            ((cpu_delta / sys_delta) * 100.0 * cpus * 1000.0).round() / 1000.0
+                        } else {
+                            0.0
+                        }
+                    };
 
-                prev_cpu = (
-                    stats.cpu_stats.cpu_usage.total_usage,
-                    stats.cpu_stats.system_cpu_usage.unwrap_or(0),
-                );
+                    prev_cpu = (
+                        cpu_usage.total_usage.unwrap_or(0),
+                        cpu_stats.system_cpu_usage.unwrap_or(0),
+                    );
+                }
             }
         });
 
@@ -837,7 +830,7 @@ impl DockerProcessHandle {
                 let state = inspect.state.unwrap_or_default();
 
                 let process_status = match state.status {
-                    Some(ContainerStateStatusEnum::RUNNING) => {
+                    Some(bollard::plugin::ContainerStateStatusEnum::RUNNING) => {
                         if let Some(ref started_at) = state.started_at
                             && let Ok(started_at) = chrono::DateTime::parse_from_rfc3339(started_at)
                         {
@@ -849,7 +842,9 @@ impl DockerProcessHandle {
                         }
                         super::ProcessStatus::Running
                     }
-                    Some(ContainerStateStatusEnum::PAUSED) => super::ProcessStatus::Paused,
+                    Some(bollard::plugin::ContainerStateStatusEnum::PAUSED) => {
+                        super::ProcessStatus::Paused
+                    }
                     _ => {
                         state_usage.write().await.uptime = 0;
                         super::ProcessStatus::Stopped {
@@ -909,9 +904,9 @@ impl super::ProcessHandle for DockerProcessHandle {
         let tail = lines.map_or_else(|| "all".to_string(), |n| n.to_string());
 
         let stream = docker
-            .logs::<String>(
+            .logs(
                 &container_id,
-                Some(LogsOptions {
+                Some(bollard::query_parameters::LogsOptions {
                     follow: false,
                     stdout: true,
                     stderr: true,
@@ -964,7 +959,7 @@ impl super::ProcessHandle for DockerProcessHandle {
 
     async fn start(&self) -> Result<(), anyhow::Error> {
         self.docker
-            .start_container::<String>(&self.container_id, None)
+            .start_container(&self.container_id, None)
             .await
             .map_err(Into::into)
     }
@@ -992,7 +987,7 @@ impl super::ProcessHandle for DockerProcessHandle {
                 self.docker
                     .kill_container(
                         &self.container_id,
-                        Some(KillContainerOptions {
+                        Some(bollard::query_parameters::KillContainerOptions {
                             signal: signal.to_string(),
                         }),
                     )
@@ -1011,7 +1006,13 @@ impl super::ProcessHandle for DockerProcessHandle {
             }
             _ => self
                 .docker
-                .stop_container(&self.container_id, Some(StopContainerOptions { t: -1 }))
+                .stop_container(
+                    &self.container_id,
+                    Some(bollard::query_parameters::StopContainerOptions {
+                        t: Some(-1),
+                        ..Default::default()
+                    }),
+                )
                 .await
                 .map_err(Into::into),
         }
@@ -1021,7 +1022,7 @@ impl super::ProcessHandle for DockerProcessHandle {
         self.docker
             .kill_container(
                 &self.container_id,
-                Some(KillContainerOptions {
+                Some(bollard::query_parameters::KillContainerOptions {
                     signal: "SIGKILL".to_string(),
                 }),
             )
@@ -1034,14 +1035,17 @@ type StatusReceiver =
     tokio::sync::mpsc::Receiver<(super::ProcessStatus, super::super::resources::ResourceUsage)>;
 
 async fn find_running_container(
-    docker: &Docker,
+    docker: &bollard::Docker,
     name_filter: &str,
     exclude_name: Option<&str>,
 ) -> Option<String> {
     let containers = docker
-        .list_containers(Some(ListContainersOptions::<String> {
+        .list_containers(Some(bollard::query_parameters::ListContainersOptions {
             all: true,
-            filters: HashMap::from([("name".to_string(), vec![name_filter.to_string()])]),
+            filters: Some(HashMap::from([(
+                "name".to_string(),
+                vec![name_filter.to_string()],
+            )])),
             ..Default::default()
         }))
         .await
@@ -1056,7 +1060,7 @@ async fn find_running_container(
             continue;
         }
 
-        if c.state.as_deref().map(str::to_lowercase).as_deref() != Some("running") {
+        if c.state != Some(bollard::plugin::ContainerSummaryStateEnum::RUNNING) {
             continue;
         }
 
@@ -1071,7 +1075,7 @@ async fn find_running_container(
 #[async_trait::async_trait]
 impl super::ServerExecutor for DockerExecutor {
     async fn boot(&self) -> Result<(), anyhow::Error> {
-        self.app_config.ensure_network(&self.docker).await
+        self.app_config.ensure_docker_network(&self.docker).await
     }
 
     async fn setup_server_process(
@@ -1108,8 +1112,8 @@ impl super::ServerExecutor for DockerExecutor {
         let container = self
             .docker
             .create_container(
-                Some(CreateContainerOptions {
-                    name: container_name,
+                Some(bollard::query_parameters::CreateContainerOptions {
+                    name: Some(container_name),
                     ..Default::default()
                 }),
                 bollard_config,
@@ -1161,9 +1165,12 @@ impl super::ServerExecutor for DockerExecutor {
     ) -> Result<(), anyhow::Error> {
         let containers = self
             .docker
-            .list_containers(Some(ListContainersOptions::<String> {
+            .list_containers(Some(bollard::query_parameters::ListContainersOptions {
                 all: true,
-                filters: HashMap::from([("name".to_string(), vec![server.uuid.to_string()])]),
+                filters: Some(HashMap::from([(
+                    "name".to_string(),
+                    vec![server.uuid.to_string()],
+                )])),
                 ..Default::default()
             }))
             .await?;
@@ -1174,7 +1181,7 @@ impl super::ServerExecutor for DockerExecutor {
                 .docker
                 .remove_container(
                     &id,
-                    Some(RemoveContainerOptions {
+                    Some(bollard::query_parameters::RemoveContainerOptions {
                         force: true,
                         ..Default::default()
                     }),
@@ -1231,8 +1238,8 @@ impl super::ServerExecutor for DockerExecutor {
             tokio::fs::set_permissions(&tmp_dir, std::fs::Permissions::from_mode(0o755)).await?;
         }
 
-        let bollard_config = bollard::container::Config {
-            host_config: Some(HostConfig {
+        let bollard_config = bollard::plugin::ContainerCreateBody {
+            host_config: Some(bollard::plugin::HostConfig {
                 memory: resources.memory,
                 memory_reservation: resources.memory_reservation,
                 memory_swap: resources.memory_swap,
@@ -1244,14 +1251,14 @@ impl super::ServerExecutor for DockerExecutor {
                 blkio_weight: resources.blkio_weight,
                 oom_kill_disable: resources.oom_kill_disable,
                 mounts: Some(vec![
-                    Mount {
-                        typ: Some(MountTypeEnum::BIND),
+                    bollard::plugin::Mount {
+                        typ: Some(bollard::plugin::MountType::BIND),
                         source: Some(server.filesystem.base().into()),
                         target: Some("/mnt/server".to_string()),
                         ..Default::default()
                     },
-                    Mount {
-                        typ: Some(MountTypeEnum::BIND),
+                    bollard::plugin::Mount {
+                        typ: Some(bollard::plugin::MountType::BIND),
                         source: Some(tmp_dir.to_string_lossy().into_owned()),
                         target: Some("/mnt/install".to_string()),
                         ..Default::default()
@@ -1263,7 +1270,7 @@ impl super::ServerExecutor for DockerExecutor {
                     "/tmp".to_string(),
                     format!("rw,exec,nosuid,size={}M", self.app_config.docker.tmpfs_size),
                 )])),
-                log_config: Some(HostConfigLogConfig {
+                log_config: Some(bollard::plugin::HostConfigLogConfig {
                     typ: Some(self.app_config.docker.log_config.r#type.clone()),
                     config: Some(
                         self.app_config
@@ -1300,8 +1307,8 @@ impl super::ServerExecutor for DockerExecutor {
         let container = self
             .docker
             .create_container(
-                Some(CreateContainerOptions {
-                    name: format!("{}_installer", server.uuid),
+                Some(bollard::query_parameters::CreateContainerOptions {
+                    name: Some(format!("{}_installer", server.uuid)),
                     ..Default::default()
                 }),
                 bollard_config,
@@ -1353,12 +1360,12 @@ impl super::ServerExecutor for DockerExecutor {
     ) -> Result<(), anyhow::Error> {
         let containers = self
             .docker
-            .list_containers(Some(ListContainersOptions::<String> {
+            .list_containers(Some(bollard::query_parameters::ListContainersOptions {
                 all: true,
-                filters: HashMap::from([(
+                filters: Some(HashMap::from([(
                     "name".to_string(),
                     vec![format!("{}_installer", server.uuid)],
-                )]),
+                )])),
                 ..Default::default()
             }))
             .await?;
@@ -1369,7 +1376,7 @@ impl super::ServerExecutor for DockerExecutor {
                 .docker
                 .remove_container(
                     &id,
-                    Some(RemoveContainerOptions {
+                    Some(bollard::query_parameters::RemoveContainerOptions {
                         force: true,
                         ..Default::default()
                     }),
@@ -1426,8 +1433,8 @@ impl super::ServerExecutor for DockerExecutor {
             tokio::fs::set_permissions(&tmp_dir, std::fs::Permissions::from_mode(0o755)).await?;
         }
 
-        let bollard_config = bollard::container::Config {
-            host_config: Some(HostConfig {
+        let bollard_config = bollard::plugin::ContainerCreateBody {
+            host_config: Some(bollard::plugin::HostConfig {
                 memory: resources.memory,
                 memory_reservation: resources.memory_reservation,
                 memory_swap: resources.memory_swap,
@@ -1439,14 +1446,14 @@ impl super::ServerExecutor for DockerExecutor {
                 blkio_weight: resources.blkio_weight,
                 oom_kill_disable: resources.oom_kill_disable,
                 mounts: Some(vec![
-                    Mount {
-                        typ: Some(MountTypeEnum::BIND),
+                    bollard::plugin::Mount {
+                        typ: Some(bollard::plugin::MountType::BIND),
                         source: Some(server.filesystem.base().into()),
                         target: Some("/mnt/server".to_string()),
                         ..Default::default()
                     },
-                    Mount {
-                        typ: Some(MountTypeEnum::BIND),
+                    bollard::plugin::Mount {
+                        typ: Some(bollard::plugin::MountType::BIND),
                         source: Some(tmp_dir.to_string_lossy().into_owned()),
                         target: Some("/mnt/script".to_string()),
                         ..Default::default()
@@ -1458,7 +1465,7 @@ impl super::ServerExecutor for DockerExecutor {
                     "/tmp".to_string(),
                     format!("rw,exec,nosuid,size={}M", self.app_config.docker.tmpfs_size),
                 )])),
-                log_config: Some(HostConfigLogConfig {
+                log_config: Some(bollard::plugin::HostConfigLogConfig {
                     typ: Some(self.app_config.docker.log_config.r#type.clone()),
                     config: Some(
                         self.app_config
@@ -1500,8 +1507,8 @@ impl super::ServerExecutor for DockerExecutor {
         let container = self
             .docker
             .create_container(
-                Some(CreateContainerOptions {
-                    name,
+                Some(bollard::query_parameters::CreateContainerOptions {
+                    name: Some(name),
                     ..Default::default()
                 }),
                 bollard_config,
