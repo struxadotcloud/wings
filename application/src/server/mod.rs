@@ -42,6 +42,7 @@ pub struct InnerServer {
         tokio::sync::broadcast::Receiver<websocket::TargetedWebsocketMessage>,
 
     process_handle: RwLock<Option<Arc<dyn executor::ProcessHandle>>>,
+    process_startup_task: RwLock<Option<tokio::task::JoinHandle<()>>>,
     pub schedules: Arc<schedule::manager::ScheduleManager>,
     pub activity: activity::ActivityManager,
 
@@ -62,6 +63,22 @@ pub struct InnerServer {
 
     pub user_permissions: permissions::UserPermissionsMap,
     pub filesystem: filesystem::Filesystem,
+}
+
+impl Drop for InnerServer {
+    fn drop(&mut self) {
+        tracing::info!(
+            server = %self.uuid,
+            "dropping server instance"
+        );
+
+        if let Some(startup_task) = self.process_startup_task.get_mut().take() {
+            startup_task.abort();
+        }
+        if let Some(websocket_sender) = self.websocket_sender.get_mut().take() {
+            websocket_sender.abort();
+        }
+    }
 }
 
 #[repr(transparent)]
@@ -109,6 +126,7 @@ impl Server {
             _targeted_websocket_receiver: targeted_websocket_rx,
 
             process_handle: RwLock::new(None),
+            process_startup_task: RwLock::new(None),
             schedules: Arc::clone(&schedules),
             activity,
 
@@ -134,6 +152,82 @@ impl Server {
 
     pub async fn initialize_schedules(&self) {
         self.schedules.update_schedules(self.clone()).await;
+    }
+
+    async fn setup_startup_task(&self, process_handle: &dyn executor::ProcessHandle) {
+        let server = self.clone();
+        let startup_configuration = self.process_configuration.read().await.startup.clone();
+
+        let mut stdout_lines = match process_handle.subscribe_stdout_lines().await {
+            Ok(stdout_lines) => stdout_lines,
+            Err(err) => {
+                tracing::error!(
+                    server = %server.uuid,
+                    "failed to subscribe to process stdout for startup task: {}",
+                    err
+                );
+                return;
+            }
+        };
+
+        let old_task = self
+            .process_startup_task
+            .write()
+            .await
+            .replace(tokio::spawn(async move {
+                let check_startup = async |line: &str| {
+                    if server.state.get_state() != state::ServerState::Starting {
+                        return true;
+                    }
+
+                    if let Some(done_vec) = &startup_configuration.done {
+                        if startup_configuration.strip_ansi {
+                            let mut result_line = line.to_compact_string();
+                            let mut chars = line.chars().peekable();
+
+                            while let Some(c) = chars.next() {
+                                if c == '\u{1b}' {
+                                    while let Some(&next) = chars.peek() {
+                                        chars.next();
+
+                                        if next.is_ascii_alphabetic() {
+                                            break;
+                                        }
+                                    }
+                                } else {
+                                    result_line.push(c);
+                                }
+                            }
+
+                            for done in done_vec {
+                                if result_line.contains(&**done) {
+                                    server.state.set_state(state::ServerState::Running).await;
+                                    return true;
+                                }
+                            }
+                        } else {
+                            for done in done_vec {
+                                if line.contains(&**done) {
+                                    server.state.set_state(state::ServerState::Running).await;
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+
+                    false
+                };
+
+                while let Ok(line) = stdout_lines.recv().await {
+                    if check_startup(&line).await {
+                        break;
+                    }
+                }
+            }));
+
+        if let Some(old_task) = old_task {
+            old_task.abort();
+        }
     }
 
     fn setup_websocket_sender(
@@ -588,6 +682,7 @@ impl Server {
             .await?;
 
         self.setup_websocket_sender(status_rx).await;
+        self.setup_startup_task(&*process_handle).await;
         *self.process_handle.write().await = Some(process_handle);
 
         Ok(())
@@ -612,6 +707,7 @@ impl Server {
             Ok((process_handle, status_rx)) => {
                 self.crash_handled.store(true, Ordering::SeqCst);
                 self.setup_websocket_sender(status_rx).await;
+                self.setup_startup_task(&*process_handle).await;
                 *self.process_handle.write().await = Some(process_handle);
 
                 tokio::spawn({
