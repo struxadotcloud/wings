@@ -448,7 +448,7 @@ impl super::VirtualReadableFilesystem for VirtualCapFilesystem {
                             }
                         }
                     }
-                    _ => {
+                    f if f.is_tar() => {
                         match crate::server::filesystem::archive::create::create_tar(
                             filesystem,
                             writer,
@@ -474,6 +474,40 @@ impl super::VirtualReadableFilesystem for VirtualCapFilesystem {
                                 );
                             }
                         }
+                    }
+                    f if f.is_itaf() => {
+                        match crate::server::filesystem::archive::create::create_itaf(
+                            filesystem,
+                            writer,
+                            &path,
+                            names,
+                            bytes_archived,
+                            is_ignored,
+                            crate::server::filesystem::archive::create::CreateItafOptions {
+                                compression_type: archive_format.compression_format(),
+                                compression_level,
+                                threads: file_compression_threads,
+                                crc_enabled: true,
+                            },
+                        )
+                        .await
+                        {
+                            Ok(inner) => {
+                                inner.into_inner().shutdown().await.ok();
+                            }
+                            Err(err) => {
+                                tracing::error!(
+                                    "failed to create itaf archive for cap vfs: {}",
+                                    err
+                                );
+                            }
+                        }
+                    }
+                    _ => {
+                        tracing::error!(
+                            "unsupported archive format for cap vfs: {}",
+                            archive_format.extension()
+                        );
                     }
                 }
             }

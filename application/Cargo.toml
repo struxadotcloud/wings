@@ -87,6 +87,7 @@ sntpc = { version = "0.9.0", features = ["std"] }
 notify = "8.2.0"
 hex = "0.4.3"
 json-patch = "4.2.0"
+itaf = "0.2.0"
 
 [target.'cfg(all(target_os = "linux", target_arch = "x86_64"))'.dependencies]
 tikv-jemallocator = "0.6.0"

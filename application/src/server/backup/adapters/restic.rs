@@ -24,6 +24,7 @@ use crate::{
 };
 use chrono::{Datelike, Timelike};
 use compact_str::{CompactString, ToCompactString};
+use itaf::encoder::{EncoderOptions, ItafEncoder, Metadata};
 use serde::Deserialize;
 use serde_default::DefaultFromSerde;
 use std::{
@@ -808,7 +809,7 @@ impl BackupExt for ResticBackup {
                     Ok(())
                 });
             }
-            _ => {
+            f if f.is_tar() => {
                 let child = std::process::Command::new("restic")
                     .envs(&self.configuration.environment)
                     .arg("--json")
@@ -829,7 +830,7 @@ impl BackupExt for ResticBackup {
                 crate::spawn_blocking_handled(move || -> Result<(), anyhow::Error> {
                     let mut writer = CompressionWriter::new(
                         tokio_util::io::SyncIoBridge::new(writer),
-                        archive_format.compression_format(),
+                        f.compression_format(),
                         compression_level,
                         file_compression_threads,
                     )?;
@@ -847,6 +848,145 @@ impl BackupExt for ResticBackup {
 
                     Ok(())
                 });
+            }
+            f if f.is_itaf() => {
+                let child = std::process::Command::new("restic")
+                    .envs(&self.configuration.environment)
+                    .arg("--json")
+                    .arg("--no-lock")
+                    .arg("--repo")
+                    .arg(&self.configuration.repository)
+                    .args(self.configuration.password())
+                    .arg("--cache-dir")
+                    .arg(get_restic_cache_dir(&self.config))
+                    .arg("dump")
+                    .arg(format!("{}:{}", self.short_id, self.server_path.display()))
+                    .arg("/")
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()?;
+
+                let file_compression_threads = self.config.api.file_compression_threads;
+                crate::spawn_blocking_handled(move || -> Result<(), anyhow::Error> {
+                    let writer = CompressionWriter::new(
+                        tokio_util::io::SyncIoBridge::new(writer),
+                        f.compression_format(),
+                        compression_level,
+                        file_compression_threads,
+                    )?;
+                    let mut itaf_enc = ItafEncoder::new(
+                        writer,
+                        EncoderOptions {
+                            base_timestamp: None,
+                            crc_enabled: true,
+                        },
+                    )?;
+
+                    let mut dir_stack: Vec<compact_str::CompactString> = Vec::new();
+                    let mut restic_tar = tar::Archive::new(child.stdout.unwrap());
+                    let mut entries = restic_tar.entries()?;
+
+                    while let Some(Ok(entry)) = entries.next() {
+                        let header = entry.header().clone();
+                        let relative = entry.path()?.to_path_buf();
+
+                        if relative.as_os_str() == "." {
+                            continue;
+                        }
+
+                        let components: Vec<compact_str::CompactString> = relative
+                            .components()
+                            .filter_map(|c| match c {
+                                std::path::Component::Normal(s) => Some(s.to_string_lossy().into()),
+                                _ => None,
+                            })
+                            .collect();
+                        if components.is_empty() {
+                            continue;
+                        }
+
+                        let is_dir = header.entry_type() == tar::EntryType::Directory;
+                        let name = components.last().unwrap().clone();
+                        let parent = &components[..components.len() - 1];
+
+                        let mode = header.mode().unwrap_or(if is_dir { 0o755 } else { 0o644 });
+                        let mtime = header
+                            .mtime()
+                            .map(|t| std::time::UNIX_EPOCH + std::time::Duration::from_secs(t))
+                            .unwrap_or_else(|_| std::time::SystemTime::now());
+                        let meta = Metadata {
+                            uid: 0,
+                            gid: 0,
+                            mode,
+                            modified: mtime,
+                        };
+
+                        let shared = dir_stack
+                            .iter()
+                            .zip(parent.iter())
+                            .take_while(|(a, b)| a == b)
+                            .count();
+                        while dir_stack.len() > shared {
+                            itaf_enc.exit_dir()?;
+                            dir_stack.pop();
+                        }
+                        for component in &parent[shared..] {
+                            itaf_enc.enter_dir(
+                                component,
+                                &Metadata {
+                                    uid: 0,
+                                    gid: 0,
+                                    mode: 0o755,
+                                    modified: std::time::SystemTime::now(),
+                                },
+                            )?;
+                            dir_stack.push(component.clone());
+                        }
+
+                        match header.entry_type() {
+                            tar::EntryType::Directory => {
+                                itaf_enc.enter_dir(&name, &meta)?;
+                                dir_stack.push(name);
+                            }
+                            tar::EntryType::Regular => {
+                                let size = header.size().unwrap_or(0);
+                                let mut reader =
+                                    crate::io::fixed_reader::FixedReader::new_with_fixed_bytes(
+                                        entry,
+                                        size as usize,
+                                    );
+
+                                itaf_enc.add_file(&name, &meta, size, &mut reader)?;
+                            }
+                            tar::EntryType::Symlink => {
+                                let link =
+                                    entry.link_name().unwrap_or_default().unwrap_or_default();
+                                let target = link.to_string_lossy();
+                                if itaf::spec::validate_name(&name).is_ok() {
+                                    itaf_enc.add_symlink(&name, &target, false, &meta)?;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    while !dir_stack.is_empty() {
+                        itaf_enc.exit_dir()?;
+                        dir_stack.pop();
+                    }
+
+                    let mut inner = itaf_enc.finish()?.finish()?;
+                    inner.flush()?;
+                    inner.shutdown()?;
+
+                    Ok(())
+                });
+            }
+            _ => {
+                tracing::error!(
+                    "unsupported archive format for restic backup download: {}",
+                    archive_format.extension()
+                );
             }
         }
 
@@ -1736,13 +1876,13 @@ impl VirtualReadableFilesystem for VirtualResticBackup {
                     Ok(())
                 });
             }
-            _ => {
+            f if f.is_tar() => {
                 crate::spawn_blocking_handled(move || -> Result<(), anyhow::Error> {
                     let mut child = spawn_restic()?;
 
                     let writer = CompressionWriter::new(
                         tokio_util::io::SyncIoBridge::new(writer),
-                        archive_format.compression_format(),
+                        f.compression_format(),
                         compression_level,
                         file_compression_threads,
                     )?;
@@ -1787,6 +1927,149 @@ impl VirtualReadableFilesystem for VirtualResticBackup {
 
                     Ok(())
                 });
+            }
+            f if f.is_itaf() => {
+                crate::spawn_blocking_handled(move || -> Result<(), anyhow::Error> {
+                    let mut child = spawn_restic()?;
+
+                    let writer = CompressionWriter::new(
+                        tokio_util::io::SyncIoBridge::new(writer),
+                        f.compression_format(),
+                        compression_level,
+                        file_compression_threads,
+                    )?;
+                    let mut itaf_enc = ItafEncoder::new(
+                        writer,
+                        EncoderOptions {
+                            base_timestamp: None,
+                            crc_enabled: true,
+                        },
+                    )?;
+
+                    let mut dir_stack: Vec<compact_str::CompactString> = Vec::new();
+                    let mut restic_tar = tar::Archive::new(child.stdout.take().unwrap());
+                    let mut entries = restic_tar.entries()?;
+
+                    while let Some(Ok(entry)) = entries.next() {
+                        let header = entry.header().clone();
+                        let relative = entry.path()?.to_path_buf();
+
+                        if relative.as_os_str() == "." {
+                            continue;
+                        }
+
+                        let file_type = match header.entry_type() {
+                            tar::EntryType::Directory => FileType::Dir,
+                            tar::EntryType::Regular => FileType::File,
+                            tar::EntryType::Symlink => FileType::Symlink,
+                            _ => continue,
+                        };
+
+                        let absolute_path = path.join(&relative);
+                        if (is_ignored)(file_type, absolute_path).is_none() {
+                            continue;
+                        }
+
+                        let components: Vec<compact_str::CompactString> = relative
+                            .components()
+                            .filter_map(|c| match c {
+                                std::path::Component::Normal(s) => Some(s.to_string_lossy().into()),
+                                _ => None,
+                            })
+                            .collect();
+                        if components.is_empty() {
+                            continue;
+                        }
+
+                        let is_dir = file_type.is_dir();
+                        let name = components.last().unwrap().clone();
+                        let parent = &components[..components.len() - 1];
+
+                        let mode = header.mode().unwrap_or(if is_dir { 0o755 } else { 0o644 });
+                        let mtime = header
+                            .mtime()
+                            .map(|t| std::time::UNIX_EPOCH + std::time::Duration::from_secs(t))
+                            .unwrap_or_else(|_| std::time::SystemTime::now());
+                        let meta = Metadata {
+                            uid: 0,
+                            gid: 0,
+                            mode,
+                            modified: mtime,
+                        };
+
+                        let shared = dir_stack
+                            .iter()
+                            .zip(parent.iter())
+                            .take_while(|(a, b)| a == b)
+                            .count();
+                        while dir_stack.len() > shared {
+                            itaf_enc.exit_dir()?;
+                            dir_stack.pop();
+                        }
+                        for component in &parent[shared..] {
+                            itaf_enc.enter_dir(
+                                component,
+                                &Metadata {
+                                    uid: 0,
+                                    gid: 0,
+                                    mode: 0o755,
+                                    modified: std::time::SystemTime::now(),
+                                },
+                            )?;
+                            dir_stack.push(component.clone());
+                        }
+
+                        match file_type {
+                            FileType::Dir => {
+                                itaf_enc.enter_dir(&name, &meta)?;
+                                dir_stack.push(name);
+                            }
+                            FileType::File => {
+                                let size = header.size().unwrap_or(0);
+                                let reader: Box<dyn Read> = match &bytes_archived {
+                                    Some(counter) => Box::new(CountingReader::new_with_bytes_read(
+                                        entry,
+                                        counter.clone(),
+                                    )),
+                                    None => Box::new(entry),
+                                };
+                                let mut reader =
+                                    crate::io::fixed_reader::FixedReader::new_with_fixed_bytes(
+                                        reader,
+                                        size as usize,
+                                    );
+
+                                itaf_enc.add_file(&name, &meta, size, &mut reader)?;
+                            }
+                            FileType::Symlink => {
+                                let link =
+                                    entry.link_name().unwrap_or_default().unwrap_or_default();
+                                let target = link.to_string_lossy();
+                                if itaf::spec::validate_name(&name).is_ok() {
+                                    itaf_enc.add_symlink(&name, &target, false, &meta)?;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    while !dir_stack.is_empty() {
+                        itaf_enc.exit_dir()?;
+                        dir_stack.pop();
+                    }
+
+                    let mut inner = itaf_enc.finish()?.finish()?;
+                    inner.flush()?;
+                    inner.shutdown()?;
+
+                    Ok(())
+                });
+            }
+            _ => {
+                tracing::error!(
+                    "unsupported archive format for restic backup archive: {}",
+                    archive_format.extension()
+                );
             }
         }
 
@@ -2003,11 +2286,11 @@ impl VirtualReadableFilesystem for VirtualResticBackup {
                     Ok(())
                 });
             }
-            _ => {
+            f if f.is_tar() => {
                 crate::spawn_blocking_handled(move || -> Result<(), anyhow::Error> {
                     let writer = CompressionWriter::new(
                         tokio_util::io::SyncIoBridge::new(writer),
-                        archive_format.compression_format(),
+                        f.compression_format(),
                         compression_level,
                         file_compression_threads,
                     )?;
@@ -2098,6 +2381,306 @@ impl VirtualReadableFilesystem for VirtualResticBackup {
 
                     Ok(())
                 });
+            }
+            f if f.is_itaf() => {
+                crate::spawn_blocking_handled(move || -> Result<(), anyhow::Error> {
+                    let writer = CompressionWriter::new(
+                        tokio_util::io::SyncIoBridge::new(writer),
+                        f.compression_format(),
+                        compression_level,
+                        file_compression_threads,
+                    )?;
+                    let mut itaf_enc = ItafEncoder::new(
+                        writer,
+                        EncoderOptions {
+                            base_timestamp: None,
+                            crc_enabled: true,
+                        },
+                    )?;
+
+                    let mut dir_stack: Vec<compact_str::CompactString> = Vec::new();
+
+                    resolved.sort_unstable_by(|a, b| {
+                        let pa = match a {
+                            ResolvedEntry::Dir { path } => path.as_path(),
+                            ResolvedEntry::File { path, .. } => path.as_path(),
+                        };
+                        let pb = match b {
+                            ResolvedEntry::Dir { path } => path.as_path(),
+                            ResolvedEntry::File { path, .. } => path.as_path(),
+                        };
+                        pa.cmp(pb)
+                    });
+
+                    for resolved_entry in resolved {
+                        match resolved_entry {
+                            ResolvedEntry::Dir { path: entry_path } => {
+                                let components: Vec<compact_str::CompactString> = entry_path
+                                    .components()
+                                    .filter_map(|c| match c {
+                                        std::path::Component::Normal(s) => {
+                                            Some(s.to_string_lossy().into())
+                                        }
+                                        _ => None,
+                                    })
+                                    .collect();
+                                if components.is_empty() {
+                                    continue;
+                                }
+
+                                let name = components.last().unwrap().clone();
+                                let parent = &components[..components.len() - 1];
+
+                                let shared = dir_stack
+                                    .iter()
+                                    .zip(parent.iter())
+                                    .take_while(|(a, b)| a == b)
+                                    .count();
+                                while dir_stack.len() > shared {
+                                    itaf_enc.exit_dir()?;
+                                    dir_stack.pop();
+                                }
+                                for component in &parent[shared..] {
+                                    itaf_enc.enter_dir(
+                                        component,
+                                        &Metadata {
+                                            uid: 0,
+                                            gid: 0,
+                                            mode: 0o755,
+                                            modified: std::time::SystemTime::now(),
+                                        },
+                                    )?;
+                                    dir_stack.push(component.clone());
+                                }
+
+                                itaf_enc.enter_dir(
+                                    &name,
+                                    &Metadata {
+                                        uid: 0,
+                                        gid: 0,
+                                        mode: 0o755,
+                                        modified: std::time::SystemTime::now(),
+                                    },
+                                )?;
+                                dir_stack.push(name);
+
+                                let base_depth = dir_stack.len();
+                                let mut child = spawn_restic(true, &entry_path)?;
+                                let mut restic_tar =
+                                    tar::Archive::new(child.stdout.take().unwrap());
+                                let mut entries = restic_tar.entries()?;
+
+                                while let Some(Ok(entry)) = entries.next() {
+                                    let header = entry.header().clone();
+                                    let relative = entry.path()?.to_path_buf();
+
+                                    if relative.as_os_str() == "." {
+                                        continue;
+                                    }
+
+                                    let file_type = match header.entry_type() {
+                                        tar::EntryType::Directory => FileType::Dir,
+                                        tar::EntryType::Regular => FileType::File,
+                                        tar::EntryType::Symlink => FileType::Symlink,
+                                        _ => continue,
+                                    };
+
+                                    let absolute_path = path.join(&entry_path).join(&relative);
+                                    if (is_ignored)(file_type, absolute_path).is_none() {
+                                        continue;
+                                    }
+
+                                    let inner_components: Vec<compact_str::CompactString> =
+                                        relative
+                                            .components()
+                                            .filter_map(|c| match c {
+                                                std::path::Component::Normal(s) => {
+                                                    Some(s.to_string_lossy().into())
+                                                }
+                                                _ => None,
+                                            })
+                                            .collect();
+                                    if inner_components.is_empty() {
+                                        continue;
+                                    }
+
+                                    let inner_name = inner_components.last().unwrap().clone();
+                                    let inner_parent =
+                                        &inner_components[..inner_components.len() - 1];
+
+                                    let shared = dir_stack[base_depth..]
+                                        .iter()
+                                        .zip(inner_parent.iter())
+                                        .take_while(|(a, b)| a == b)
+                                        .count();
+                                    while dir_stack.len() > base_depth + shared {
+                                        itaf_enc.exit_dir()?;
+                                        dir_stack.pop();
+                                    }
+                                    for component in &inner_parent[shared..] {
+                                        itaf_enc.enter_dir(
+                                            component,
+                                            &Metadata {
+                                                uid: 0,
+                                                gid: 0,
+                                                mode: 0o755,
+                                                modified: std::time::SystemTime::now(),
+                                            },
+                                        )?;
+                                        dir_stack.push(component.clone());
+                                    }
+
+                                    let is_dir = file_type.is_dir();
+                                    let mode =
+                                        header.mode().unwrap_or(if is_dir { 0o755 } else { 0o644 });
+                                    let mtime = header
+                                        .mtime()
+                                        .map(|t| {
+                                            std::time::UNIX_EPOCH
+                                                + std::time::Duration::from_secs(t)
+                                        })
+                                        .unwrap_or_else(|_| std::time::SystemTime::now());
+                                    let meta = Metadata {
+                                        uid: 0,
+                                        gid: 0,
+                                        mode,
+                                        modified: mtime,
+                                    };
+
+                                    match file_type {
+                                        FileType::Dir => {
+                                            itaf_enc.enter_dir(&inner_name, &meta)?;
+                                            dir_stack.push(inner_name);
+                                        }
+                                        FileType::File => {
+                                            let size = header.size().unwrap_or(0);
+                                            let reader: Box<dyn Read> = match &bytes_archived {
+                                                Some(counter) => {
+                                                    Box::new(CountingReader::new_with_bytes_read(
+                                                        entry,
+                                                        counter.clone(),
+                                                    ))
+                                                }
+                                                None => Box::new(entry),
+                                            };
+                                            let mut reader = crate::io::fixed_reader::FixedReader::new_with_fixed_bytes(
+                                                reader,
+                                                size as usize,
+                                            );
+
+                                            itaf_enc.add_file(
+                                                &inner_name,
+                                                &meta,
+                                                size,
+                                                &mut reader,
+                                            )?;
+                                        }
+                                        FileType::Symlink => {
+                                            let link = entry
+                                                .link_name()
+                                                .unwrap_or_default()
+                                                .unwrap_or_default();
+                                            let target = link.to_string_lossy();
+                                            if itaf::spec::validate_name(&inner_name).is_ok() {
+                                                itaf_enc.add_symlink(
+                                                    &inner_name,
+                                                    &target,
+                                                    false,
+                                                    &meta,
+                                                )?;
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
+                            ResolvedEntry::File {
+                                path: entry_path,
+                                mode,
+                                size,
+                                mtime,
+                            } => {
+                                let components: Vec<compact_str::CompactString> = entry_path
+                                    .components()
+                                    .filter_map(|c| match c {
+                                        std::path::Component::Normal(s) => {
+                                            Some(s.to_string_lossy().into())
+                                        }
+                                        _ => None,
+                                    })
+                                    .collect();
+                                if components.is_empty() {
+                                    continue;
+                                }
+
+                                let file_name = components.last().unwrap().clone();
+                                let parent = &components[..components.len() - 1];
+
+                                let shared = dir_stack
+                                    .iter()
+                                    .zip(parent.iter())
+                                    .take_while(|(a, b)| a == b)
+                                    .count();
+                                while dir_stack.len() > shared {
+                                    itaf_enc.exit_dir()?;
+                                    dir_stack.pop();
+                                }
+                                for component in &parent[shared..] {
+                                    itaf_enc.enter_dir(
+                                        component,
+                                        &Metadata {
+                                            uid: 0,
+                                            gid: 0,
+                                            mode: 0o755,
+                                            modified: std::time::SystemTime::now(),
+                                        },
+                                    )?;
+                                    dir_stack.push(component.clone());
+                                }
+
+                                let meta = Metadata {
+                                    uid: 0,
+                                    gid: 0,
+                                    mode,
+                                    modified: mtime.into(),
+                                };
+
+                                let mut child = spawn_restic(false, &entry_path)?;
+                                let reader: Box<dyn Read> = match &bytes_archived {
+                                    Some(counter) => Box::new(CountingReader::new_with_bytes_read(
+                                        child.stdout.take().unwrap(),
+                                        counter.clone(),
+                                    )),
+                                    None => Box::new(child.stdout.take().unwrap()),
+                                };
+                                let mut reader =
+                                    crate::io::fixed_reader::FixedReader::new_with_fixed_bytes(
+                                        reader,
+                                        size as usize,
+                                    );
+
+                                itaf_enc.add_file(&file_name, &meta, size, &mut reader)?;
+                            }
+                        }
+                    }
+
+                    while !dir_stack.is_empty() {
+                        itaf_enc.exit_dir()?;
+                        dir_stack.pop();
+                    }
+
+                    let mut inner = itaf_enc.finish()?.finish()?;
+                    inner.flush()?;
+                    inner.shutdown()?;
+
+                    Ok(())
+                });
+            }
+            _ => {
+                tracing::error!(
+                    "unsupported archive format for restic backup files archive: {}",
+                    archive_format.extension()
+                );
             }
         }
 

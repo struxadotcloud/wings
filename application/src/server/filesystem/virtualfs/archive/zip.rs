@@ -20,6 +20,7 @@ use crate::{
     },
     utils::PortablePermissions,
 };
+use itaf::encoder::{EncoderOptions, ItafEncoder, Metadata};
 use std::{
     io::{Read, Seek, Write},
     path::{Path, PathBuf},
@@ -941,10 +942,10 @@ impl VirtualReadableFilesystem for VirtualZipArchive {
                     Ok(())
                 });
             }
-            _ => {
+            f if f.is_tar() => {
                 let writer = CompressionWriter::new(
                     tokio_util::io::SyncIoBridge::new(writer),
-                    archive_format.compression_format(),
+                    f.compression_format(),
                     compression_level,
                     self.server.app_state.config.api.file_compression_threads,
                 )?;
@@ -1028,6 +1029,138 @@ impl VirtualReadableFilesystem for VirtualZipArchive {
 
                     Ok(())
                 });
+            }
+            f if f.is_itaf() => {
+                let writer = CompressionWriter::new(
+                    tokio_util::io::SyncIoBridge::new(writer),
+                    f.compression_format(),
+                    compression_level,
+                    self.server.app_state.config.api.file_compression_threads,
+                )?;
+
+                crate::spawn_blocking_handled(move || -> Result<(), anyhow::Error> {
+                    let mut itaf_enc = ItafEncoder::new(
+                        writer,
+                        EncoderOptions {
+                            base_timestamp: None,
+                            crc_enabled: true,
+                        },
+                    )?;
+
+                    let mut entries: Vec<(PathBuf, usize)> = Vec::new();
+                    for i in 0..archive.len() {
+                        let entry = archive.by_index(i)?;
+                        if entry.is_dir() {
+                            continue;
+                        }
+                        let name = match entry.enclosed_name() {
+                            Some(n) => n,
+                            None => continue,
+                        };
+                        let relative = match name.strip_prefix(&path) {
+                            Ok(r) => r.to_path_buf(),
+                            Err(_) => continue,
+                        };
+                        if relative.components().count() == 0 {
+                            continue;
+                        }
+                        let file_type = VirtualZipArchive::zip_entry_to_file_type(&entry);
+                        if (is_ignored)(file_type, relative.clone()).is_none() {
+                            continue;
+                        }
+                        entries.push((relative, i));
+                    }
+                    entries.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+
+                    let mut dir_stack: Vec<compact_str::CompactString> = Vec::new();
+
+                    for (relative, zip_index) in entries {
+                        let components: Vec<compact_str::CompactString> = relative
+                            .components()
+                            .filter_map(|c| match c {
+                                std::path::Component::Normal(s) => Some(s.to_string_lossy().into()),
+                                _ => None,
+                            })
+                            .collect();
+                        if components.is_empty() {
+                            continue;
+                        }
+                        let name = components.last().unwrap().clone();
+                        let parent = &components[..components.len() - 1];
+
+                        let shared = dir_stack
+                            .iter()
+                            .zip(parent.iter())
+                            .take_while(|(a, b)| a == b)
+                            .count();
+                        while dir_stack.len() > shared {
+                            itaf_enc.exit_dir()?;
+                            dir_stack.pop();
+                        }
+                        for component in &parent[shared..] {
+                            itaf_enc.enter_dir(
+                                component,
+                                &Metadata {
+                                    uid: 0,
+                                    gid: 0,
+                                    mode: 0o755,
+                                    modified: std::time::SystemTime::now(),
+                                },
+                            )?;
+                            dir_stack.push(component.clone());
+                        }
+
+                        let entry = archive.by_index(zip_index)?;
+                        let mtime = zip_entry_get_modified_time(&entry)
+                            .map(|t| t.into_std())
+                            .unwrap_or_else(std::time::SystemTime::now);
+                        let meta = Metadata {
+                            uid: 0,
+                            gid: 0,
+                            mode: entry.unix_mode().unwrap_or(0o644),
+                            modified: mtime,
+                        };
+                        let size = entry.size();
+
+                        if entry.is_symlink() && (1..=2048).contains(&size) {
+                            let link_target = std::io::read_to_string(entry)?;
+                            if itaf::spec::validate_name(&name).is_ok() {
+                                itaf_enc.add_symlink(&name, &link_target, false, &meta)?;
+                            }
+                        } else if entry.is_file() {
+                            let reader: Box<dyn Read> = match &bytes_archived {
+                                Some(ba) => Box::new(CountingReader::new_with_bytes_read(
+                                    entry,
+                                    Arc::clone(ba),
+                                )),
+                                None => Box::new(entry),
+                            };
+                            let mut reader =
+                                crate::io::fixed_reader::FixedReader::new_with_fixed_bytes(
+                                    reader,
+                                    size as usize,
+                                );
+                            itaf_enc.add_file(&name, &meta, size, &mut { reader })?;
+                        }
+                    }
+
+                    while !dir_stack.is_empty() {
+                        itaf_enc.exit_dir()?;
+                        dir_stack.pop();
+                    }
+
+                    let mut inner = itaf_enc.finish()?.finish()?;
+                    inner.flush()?;
+                    inner.shutdown()?;
+
+                    Ok(())
+                });
+            }
+            _ => {
+                tracing::error!(
+                    "unsupported archive format for zip vfs: {}",
+                    archive_format.extension()
+                );
             }
         }
 

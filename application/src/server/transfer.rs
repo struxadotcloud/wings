@@ -39,19 +39,31 @@ pub enum TransferArchiveFormat {
     TarBz2,
     TarLz4,
     TarZstd,
+
+    Itaf,
+    ItafGz,
+    ItafXz,
+    ItafLzip,
+    ItafBz2,
+    ItafLz4,
+    ItafZstd,
 }
 
 impl TransferArchiveFormat {
     #[inline]
     pub fn compression_format(self) -> CompressionType {
         match self {
-            TransferArchiveFormat::Tar => CompressionType::None,
-            TransferArchiveFormat::TarGz => CompressionType::Gz,
-            TransferArchiveFormat::TarXz => CompressionType::Xz,
-            TransferArchiveFormat::TarLzip => CompressionType::Lzip,
-            TransferArchiveFormat::TarBz2 => CompressionType::Bz2,
-            TransferArchiveFormat::TarLz4 => CompressionType::Lz4,
-            TransferArchiveFormat::TarZstd => CompressionType::Zstd,
+            TransferArchiveFormat::Tar | TransferArchiveFormat::Itaf => CompressionType::None,
+            TransferArchiveFormat::TarGz | TransferArchiveFormat::ItafGz => CompressionType::Gz,
+            TransferArchiveFormat::TarXz | TransferArchiveFormat::ItafXz => CompressionType::Xz,
+            TransferArchiveFormat::TarLzip | TransferArchiveFormat::ItafLzip => {
+                CompressionType::Lzip
+            }
+            TransferArchiveFormat::TarBz2 | TransferArchiveFormat::ItafBz2 => CompressionType::Bz2,
+            TransferArchiveFormat::TarLz4 | TransferArchiveFormat::ItafLz4 => CompressionType::Lz4,
+            TransferArchiveFormat::TarZstd | TransferArchiveFormat::ItafZstd => {
+                CompressionType::Zstd
+            }
         }
     }
 
@@ -64,7 +76,42 @@ impl TransferArchiveFormat {
             TransferArchiveFormat::TarBz2 => "tar.bz2",
             TransferArchiveFormat::TarLz4 => "tar.lz4",
             TransferArchiveFormat::TarZstd => "tar.zst",
+            TransferArchiveFormat::Itaf => "itaf",
+            TransferArchiveFormat::ItafGz => "itaf.gz",
+            TransferArchiveFormat::ItafXz => "itaf.xz",
+            TransferArchiveFormat::ItafLzip => "itaf.lz",
+            TransferArchiveFormat::ItafBz2 => "itaf.bz2",
+            TransferArchiveFormat::ItafLz4 => "itaf.lz4",
+            TransferArchiveFormat::ItafZstd => "itaf.zst",
         }
+    }
+
+    #[inline]
+    pub const fn is_tar(self) -> bool {
+        matches!(
+            self,
+            TransferArchiveFormat::Tar
+                | TransferArchiveFormat::TarGz
+                | TransferArchiveFormat::TarXz
+                | TransferArchiveFormat::TarLzip
+                | TransferArchiveFormat::TarBz2
+                | TransferArchiveFormat::TarLz4
+                | TransferArchiveFormat::TarZstd
+        )
+    }
+
+    #[inline]
+    pub const fn is_itaf(self) -> bool {
+        matches!(
+            self,
+            TransferArchiveFormat::Itaf
+                | TransferArchiveFormat::ItafGz
+                | TransferArchiveFormat::ItafXz
+                | TransferArchiveFormat::ItafLzip
+                | TransferArchiveFormat::ItafBz2
+                | TransferArchiveFormat::ItafLz4
+                | TransferArchiveFormat::ItafZstd
+        )
     }
 }
 
@@ -78,6 +125,13 @@ impl From<TransferArchiveFormat> for StreamableArchiveFormat {
             TransferArchiveFormat::TarBz2 => StreamableArchiveFormat::TarBz2,
             TransferArchiveFormat::TarLz4 => StreamableArchiveFormat::TarLz4,
             TransferArchiveFormat::TarZstd => StreamableArchiveFormat::TarZstd,
+            TransferArchiveFormat::Itaf => StreamableArchiveFormat::Itaf,
+            TransferArchiveFormat::ItafGz => StreamableArchiveFormat::ItafGz,
+            TransferArchiveFormat::ItafXz => StreamableArchiveFormat::ItafXz,
+            TransferArchiveFormat::ItafLzip => StreamableArchiveFormat::ItafLzip,
+            TransferArchiveFormat::ItafBz2 => StreamableArchiveFormat::ItafBz2,
+            TransferArchiveFormat::ItafLz4 => StreamableArchiveFormat::ItafLz4,
+            TransferArchiveFormat::ItafZstd => StreamableArchiveFormat::ItafZstd,
         }
     }
 }
@@ -100,6 +154,20 @@ impl std::str::FromStr for TransferArchiveFormat {
             Ok(TransferArchiveFormat::TarLz4)
         } else if s.ends_with(".tar.zst") {
             Ok(TransferArchiveFormat::TarZstd)
+        } else if s.ends_with(".itaf") {
+            Ok(TransferArchiveFormat::Itaf)
+        } else if s.ends_with(".itaf.gz") {
+            Ok(TransferArchiveFormat::ItafGz)
+        } else if s.ends_with(".itaf.xz") {
+            Ok(TransferArchiveFormat::ItafXz)
+        } else if s.ends_with(".itaf.lz") {
+            Ok(TransferArchiveFormat::ItafLzip)
+        } else if s.ends_with(".itaf.bz2") {
+            Ok(TransferArchiveFormat::ItafBz2)
+        } else if s.ends_with(".itaf.lz4") {
+            Ok(TransferArchiveFormat::ItafLz4)
+        } else if s.ends_with(".itaf.zst") {
+            Ok(TransferArchiveFormat::ItafZstd)
         } else {
             Err("Invalid archive format")
         }
@@ -222,13 +290,13 @@ impl OutgoingServerTransfer {
             let (mut checksummed_reader, checksummed_writer) = tokio::io::simplex(crate::TRANSFER_BUFFER_SIZE);
             let (reader, mut writer) = tokio::io::simplex(crate::TRANSFER_BUFFER_SIZE);
 
-            fn get_archive_task(
+            fn get_tar_archive_task(
                 files_receiver: async_channel::Receiver<PathBuf>,
                 bytes_archived: Arc<AtomicU64>,
                 server: super::Server,
                 writer: tokio_util::io::SyncIoBridge<tokio::io::WriteHalf<tokio::io::SimplexStream>>,
                 options: crate::server::filesystem::archive::create::CreateTarOptions
-            ) -> Pin<Box<impl Future<Output = Result<(), anyhow::Error>>>> {
+            ) -> Pin<Box<dyn Future<Output = Result<(), anyhow::Error>> + Send>> {
                 Box::pin(async move {
                     let writer = crate::server::filesystem::archive::create::create_tar_distributed(
                         server.filesystem.clone(),
@@ -246,17 +314,60 @@ impl OutgoingServerTransfer {
                 })
             }
 
-            let archive_task = get_archive_task(
-                files_receiver.clone(),
-                Arc::clone(&bytes_archived),
-                server.clone(),
-                tokio_util::io::SyncIoBridge::new(checksummed_writer),
-                crate::server::filesystem::archive::create::CreateTarOptions {
-                    compression_type: archive_format.compression_format(),
-                    compression_level,
-                    threads: server.app_state.config.api.file_compression_threads,
-                },
-            );
+            fn get_itaf_archive_task(
+                files_receiver: async_channel::Receiver<PathBuf>,
+                bytes_archived: Arc<AtomicU64>,
+                server: super::Server,
+                writer: tokio_util::io::SyncIoBridge<tokio::io::WriteHalf<tokio::io::SimplexStream>>,
+                options: crate::server::filesystem::archive::create::CreateItafOptions
+            ) -> Pin<Box<dyn Future<Output = Result<(), anyhow::Error>> + Send>> {
+                Box::pin(async move {
+                    let writer = crate::server::filesystem::archive::create::create_itaf_distributed(
+                        server.filesystem.clone(),
+                        writer,
+                        Path::new(""),
+                        files_receiver,
+                        Some(Arc::clone(&bytes_archived)),
+                        options,
+                    )
+                    .await?;
+
+                    writer.into_inner().shutdown().await?;
+
+                    Ok(())
+                })
+            }
+
+            let get_archive_task = |writer: tokio_util::io::SyncIoBridge<tokio::io::WriteHalf<tokio::io::SimplexStream>>| {
+                if archive_format.is_tar() {
+                    get_tar_archive_task(
+                        files_receiver.clone(),
+                        Arc::clone(&bytes_archived),
+                        server.clone(),
+                        writer,
+                        crate::server::filesystem::archive::create::CreateTarOptions {
+                            compression_type: archive_format.compression_format(),
+                            compression_level,
+                            threads: server.app_state.config.api.file_compression_threads,
+                        },
+                    )
+                } else {
+                    get_itaf_archive_task(
+                        files_receiver.clone(),
+                        Arc::clone(&bytes_archived),
+                        server.clone(),
+                        writer,
+                        crate::server::filesystem::archive::create::CreateItafOptions {
+                            compression_type: archive_format.compression_format(),
+                            compression_level,
+                            threads: server.app_state.config.api.file_compression_threads,
+                            crc_enabled: false,
+                        },
+                    )
+                }
+            };
+
+            let archive_task = get_archive_task(tokio_util::io::SyncIoBridge::new(checksummed_writer));
 
             let checksum_task = Box::pin({
                 let bytes_sent = Arc::clone(&bytes_sent);
@@ -599,17 +710,7 @@ impl OutgoingServerTransfer {
                 let (mut checksummed_reader, checksummed_writer) = tokio::io::simplex(crate::TRANSFER_BUFFER_SIZE);
                 let (reader, mut writer) = tokio::io::simplex(crate::TRANSFER_BUFFER_SIZE);
 
-                let archive_task = get_archive_task(
-                    files_receiver.clone(),
-                    Arc::clone(&bytes_archived),
-                    server.clone(),
-                    tokio_util::io::SyncIoBridge::new(checksummed_writer),
-                    crate::server::filesystem::archive::create::CreateTarOptions {
-                        compression_type: archive_format.compression_format(),
-                        compression_level,
-                        threads: server.app_state.config.api.file_compression_threads,
-                    },
-                );
+                let archive_task = get_archive_task(tokio_util::io::SyncIoBridge::new(checksummed_writer));
 
                 let checksum_task = Box::pin({
                     let bytes_sent = Arc::clone(&bytes_sent);

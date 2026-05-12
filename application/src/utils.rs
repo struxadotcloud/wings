@@ -34,7 +34,7 @@ pub fn draw_progress_bar(width: usize, current: f64, total: f64) -> String {
 
 #[inline]
 pub fn slice_after_question_mark(s: &str) -> &str {
-    s.splitn(2, '?').nth(1).unwrap_or("")
+    s.split_once('?').map(|(_, after)| after).unwrap_or("")
 }
 
 pub fn parse_content_disposition_filename(header: &str) -> Option<String> {

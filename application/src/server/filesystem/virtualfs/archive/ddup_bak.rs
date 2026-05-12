@@ -21,6 +21,7 @@ use crate::{
 };
 use chrono::{Datelike, Timelike};
 use ddup_bak::archive::entries::Entry;
+use itaf::encoder::{EncoderOptions, ItafEncoder, Metadata};
 use std::{
     collections::VecDeque,
     io::{Read, Write},
@@ -327,6 +328,77 @@ impl VirtualDdupBakArchive {
                 entry_header.set_entry_type(tar::EntryType::Symlink);
 
                 archive.append_link(&mut entry_header, &path, &link.target)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn itaf_recursive_convert_entries<W: Write>(
+        entry: &Entry,
+        repository: &Option<Arc<ddup_bak::repository::Repository>>,
+        itaf_enc: &mut ItafEncoder<W>,
+        parent_path: &Path,
+        bytes_archived: &Option<Arc<AtomicU64>>,
+        is_ignored: &IsIgnoredFn,
+    ) -> Result<(), anyhow::Error> {
+        let path = parent_path.join(entry.name());
+
+        let Some(path) = (is_ignored)(Self::ddup_bak_entry_to_file_type(entry), path) else {
+            return Ok(());
+        };
+
+        let mtime = entry
+            .mtime()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        let meta = Metadata {
+            uid: 0,
+            gid: 0,
+            mode: entry.mode().bits(),
+            modified: std::time::UNIX_EPOCH + mtime,
+        };
+        let name: compact_str::CompactString = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into();
+
+        match entry {
+            Entry::Directory(dir) => {
+                if itaf::spec::validate_name(&name).is_ok() {
+                    itaf_enc.enter_dir(&name, &meta)?;
+                    for child in &dir.entries {
+                        Self::itaf_recursive_convert_entries(
+                            child,
+                            repository,
+                            itaf_enc,
+                            &path,
+                            bytes_archived,
+                            is_ignored,
+                        )?;
+                    }
+                    itaf_enc.exit_dir()?;
+                }
+            }
+            Entry::File(file) => {
+                if itaf::spec::validate_name(&name).is_ok() {
+                    let reader: Box<dyn Read> = match bytes_archived {
+                        Some(ba) => Box::new(CountingReader::new_with_bytes_read(
+                            repository.entry_reader(Entry::File(file.clone()))?,
+                            Arc::clone(ba),
+                        )),
+                        None => Box::new(repository.entry_reader(Entry::File(file.clone()))?),
+                    };
+                    let mut reader =
+                        FixedReader::new_with_fixed_bytes(reader, file.size_real as usize);
+                    itaf_enc.add_file(&name, &meta, file.size_real, &mut { reader })?;
+                }
+            }
+            Entry::Symlink(link) => {
+                if itaf::spec::validate_name(&name).is_ok() {
+                    itaf_enc.add_symlink(&name, &link.target, false, &meta)?;
+                }
             }
         }
 
@@ -835,10 +907,10 @@ impl VirtualReadableFilesystem for VirtualDdupBakArchive {
                     Ok(())
                 });
             }
-            _ => {
+            f if f.is_tar() => {
                 let writer = CompressionWriter::new(
                     tokio_util::io::SyncIoBridge::new(writer),
-                    archive_format.compression_format(),
+                    f.compression_format(),
                     compression_level,
                     self.server.app_state.config.api.file_compression_threads,
                 )?;
@@ -893,6 +965,75 @@ impl VirtualReadableFilesystem for VirtualDdupBakArchive {
 
                     Ok(())
                 });
+            }
+            f if f.is_itaf() => {
+                let writer = CompressionWriter::new(
+                    tokio_util::io::SyncIoBridge::new(writer),
+                    f.compression_format(),
+                    compression_level,
+                    self.server.app_state.config.api.file_compression_threads,
+                )?;
+
+                crate::spawn_blocking_handled(move || -> Result<(), anyhow::Error> {
+                    let mut itaf_enc = ItafEncoder::new(
+                        writer,
+                        EncoderOptions {
+                            base_timestamp: None,
+                            crc_enabled: true,
+                        },
+                    )?;
+
+                    match archive.find_archive_entry(&path) {
+                        Some(entry) => {
+                            let entry = match entry {
+                                ddup_bak::archive::entries::Entry::Directory(entry) => entry,
+                                _ => {
+                                    return Err(anyhow::anyhow!(std::io::Error::new(
+                                        std::io::ErrorKind::NotFound,
+                                        "File not found"
+                                    )));
+                                }
+                            };
+
+                            for entry in entry.entries.iter() {
+                                Self::itaf_recursive_convert_entries(
+                                    entry,
+                                    &repository,
+                                    &mut itaf_enc,
+                                    Path::new(""),
+                                    &bytes_archived,
+                                    &is_ignored,
+                                )?;
+                            }
+                        }
+                        None => {
+                            if path.components().count() == 0 {
+                                for entry in archive.entries() {
+                                    Self::itaf_recursive_convert_entries(
+                                        entry,
+                                        &repository,
+                                        &mut itaf_enc,
+                                        Path::new(""),
+                                        &bytes_archived,
+                                        &is_ignored,
+                                    )?;
+                                }
+                            }
+                        }
+                    };
+
+                    let mut inner = itaf_enc.finish()?.finish()?;
+                    inner.flush()?;
+                    inner.shutdown()?;
+
+                    Ok(())
+                });
+            }
+            _ => {
+                tracing::error!(
+                    "unsupported archive format for ddup_bak vfs: {}",
+                    archive_format.extension()
+                );
             }
         }
 

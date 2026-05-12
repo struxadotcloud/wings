@@ -274,7 +274,7 @@ impl BackupExt for BtrfsBackup {
                             }
                         }
                     }
-                    _ => {
+                    f if f.is_tar() => {
                         match crate::server::filesystem::archive::create::create_tar(
                             filesystem,
                             writer,
@@ -283,7 +283,7 @@ impl BackupExt for BtrfsBackup {
                             None,
                             ignore.into(),
                             crate::server::filesystem::archive::create::CreateTarOptions {
-                                compression_type: archive_format.compression_format(),
+                                compression_type: f.compression_format(),
                                 compression_level: config.system.backups.compression_level,
                                 threads: config.api.file_compression_threads,
                             },
@@ -300,6 +300,40 @@ impl BackupExt for BtrfsBackup {
                                 );
                             }
                         }
+                    }
+                    f if f.is_itaf() => {
+                        match crate::server::filesystem::archive::create::create_itaf(
+                            filesystem,
+                            writer,
+                            Path::new(""),
+                            names,
+                            None,
+                            ignore.into(),
+                            crate::server::filesystem::archive::create::CreateItafOptions {
+                                compression_type: f.compression_format(),
+                                compression_level: config.system.backups.compression_level,
+                                threads: config.api.file_compression_threads,
+                                crc_enabled: true,
+                            },
+                        )
+                        .await
+                        {
+                            Ok(inner) => {
+                                inner.into_inner().shutdown().await.ok();
+                            }
+                            Err(err) => {
+                                tracing::error!(
+                                    "failed to create itaf archive for btrfs backup: {}",
+                                    err
+                                );
+                            }
+                        }
+                    }
+                    _ => {
+                        tracing::error!(
+                            "unsupported archive format for btrfs backup: {}",
+                            archive_format.extension()
+                        );
                     }
                 }
             }

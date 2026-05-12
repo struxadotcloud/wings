@@ -175,88 +175,187 @@ mod post {
                                             state.config.system.transfers.download_limit.as_bytes(),
                                         );
                                         let reader = HashReader::new_with_hasher(reader, sha2::Sha256::new());
-                                        let reader = CompressionReader::new(
+                                        let mut reader = CompressionReader::new(
                                             reader,
                                             TransferArchiveFormat::from_str(&file_name)
                                                 .map_or(CompressionType::Gz, |f| f.compression_format()),
                                         )?;
 
-                                        let mut archive = tar::Archive::new(reader);
-                                        archive.set_ignore_zeros(true);
-                                        let mut entries = archive.entries()?;
+                                        if TransferArchiveFormat::from_str(&file_name)
+                                            .is_ok_and(|f| f.is_itaf())
+                                        {
+                                            let archive =
+                                                itaf::decoder::ItafDecoder::new(&mut reader)?;
+                                            let mut entries = archive.entries();
 
-                                        let mut read_buffer = vec![0; crate::TRANSFER_BUFFER_SIZE];
-                                        while let Some(Ok(mut entry)) = entries.next() {
-                                            let path = entry.path()?;
+                                            let mut read_buffer =
+                                                vec![0; crate::TRANSFER_BUFFER_SIZE];
+                                            while let Some(Ok(mut entry)) = entries.next() {
+                                                let rel = entry.enclosed_path();
+                                                if rel.as_os_str().is_empty() || rel.is_absolute()
+                                                {
+                                                    continue;
+                                                }
 
-                                            if path.is_absolute() {
-                                                continue;
-                                            }
+                                                let destination_path =
+                                                    Path::new(&payload.destination_path).join(&rel);
 
-                                            let destination_path = Path::new(&payload.destination_path).join(&path);
-                                            let header = entry.header();
+                                                let is_dir = matches!(
+                                                    &entry,
+                                                    itaf::decoder::ArchiveEntry::Directory(_)
+                                                );
+                                                if filesystem.is_primary_server_fs()
+                                                    && server
+                                                        .filesystem
+                                                        .is_ignored_sync(&destination_path, is_dir)
+                                                {
+                                                    continue;
+                                                }
 
-                                            if filesystem.is_primary_server_fs() && server.filesystem.is_ignored_sync(&destination_path, header.entry_type() == tar::EntryType::Directory) {
-                                                continue;
-                                            }
-
-                                            match header.entry_type() {
-                                                tar::EntryType::Directory => {
-                                                    filesystem.create_dir_all(&destination_path)?;
-                                                    if let Ok(permissions) =
-                                                        header.mode().map(PortablePermissions::from_mode)
-                                                    {
+                                                match &mut entry {
+                                                    itaf::decoder::ArchiveEntry::Directory(dir) => {
+                                                        filesystem
+                                                            .create_dir_all(&destination_path)?;
                                                         filesystem.set_permissions(
                                                             &destination_path,
-                                                            permissions,
+                                                            PortablePermissions::from_mode(
+                                                                dir.metadata().mode,
+                                                            ),
                                                         )?;
                                                     }
-                                                }
-                                                tar::EntryType::Regular => {
-                                                    if let Some(parent) = destination_path.parent() {
-                                                        filesystem.create_dir_all(&parent)?;
+                                                    itaf::decoder::ArchiveEntry::File(
+                                                        file_entry,
+                                                    ) => {
+                                                        if let Some(parent) =
+                                                            destination_path.parent()
+                                                        {
+                                                            filesystem.create_dir_all(&parent)?;
+                                                        }
+
+                                                        let writer = filesystem
+                                                            .create_file(&destination_path)?;
+                                                        let mut writer =
+                                                            CountingWriter::new_with_bytes_written(
+                                                                writer,
+                                                                progress.clone(),
+                                                            );
+
+                                                        crate::io::copy_shared(
+                                                            &mut read_buffer,
+                                                            file_entry,
+                                                            &mut writer,
+                                                        )?;
+                                                        writer.flush()?;
                                                     }
-
-                                                    let writer = filesystem.create_file(&destination_path)?;
-                                                    let mut writer = CountingWriter::new_with_bytes_written(
-                                                        writer,
-                                                        progress.clone()
-                                                    );
-
-                                                    crate::io::copy_shared(
-                                                        &mut read_buffer,
-                                                        &mut entry,
-                                                        &mut writer,
-                                                    )?;
-                                                    writer.flush()?;
-                                                }
-                                                tar::EntryType::Symlink => {
-                                                    let link = entry
-                                                        .link_name()
-                                                        .unwrap_or_default()
-                                                        .unwrap_or_default();
-
-                                                    if let Err(err) =
-                                                        filesystem.create_symlink(&link, &destination_path)
-                                                    {
-                                                        tracing::debug!(
-                                                            path = %destination_path.display(),
-                                                            "failed to create symlink from archive: {:#?}",
-                                                            err
-                                                        );
+                                                    itaf::decoder::ArchiveEntry::Symlink(sym) => {
+                                                        let target = sym.target().to_path_buf();
+                                                        if let Err(err) = filesystem
+                                                            .create_symlink(
+                                                                &target,
+                                                                &destination_path,
+                                                            )
+                                                        {
+                                                            tracing::debug!(
+                                                                path = %destination_path.display(),
+                                                                "failed to create symlink from itaf archive: {:#?}",
+                                                                err
+                                                            );
+                                                        }
                                                     }
+                                                    _ => {}
                                                 }
-                                                _ => {}
                                             }
-                                        }
 
-                                        let mut inner = archive.into_inner().into_inner();
-                                        crate::io::copy_shared(
-                                            &mut read_buffer,
-                                            &mut inner,
-                                            &mut std::io::sink(),
-                                        )?;
-                                        archive_checksum = Some(inner.finish());
+                                            let mut inner = reader.into_inner();
+                                            crate::io::copy_shared(
+                                                &mut read_buffer,
+                                                &mut inner,
+                                                &mut std::io::sink(),
+                                            )?;
+                                            archive_checksum = Some(inner.finish());
+                                        } else {
+                                            let mut archive = tar::Archive::new(reader);
+                                            archive.set_ignore_zeros(true);
+                                            let mut entries = archive.entries()?;
+
+                                            let mut read_buffer = vec![0; crate::TRANSFER_BUFFER_SIZE];
+                                            while let Some(Ok(mut entry)) = entries.next() {
+                                                let path = entry.path()?;
+
+                                                if path.is_absolute() {
+                                                    continue;
+                                                }
+
+                                                let destination_path = Path::new(&payload.destination_path).join(&path);
+                                                let header = entry.header();
+
+                                                let is_dir = header.entry_type() == tar::EntryType::Directory;
+                                                if filesystem.is_primary_server_fs()
+                                                    && server
+                                                        .filesystem
+                                                        .is_ignored_sync(&destination_path, is_dir)
+                                                {
+                                                    continue;
+                                                }
+
+                                                match header.entry_type() {
+                                                    tar::EntryType::Directory => {
+                                                        filesystem.create_dir_all(&destination_path)?;
+                                                        if let Ok(permissions) =
+                                                            header.mode().map(PortablePermissions::from_mode)
+                                                        {
+                                                            filesystem.set_permissions(
+                                                                &destination_path,
+                                                                permissions,
+                                                            )?;
+                                                        }
+                                                    }
+                                                    tar::EntryType::Regular => {
+                                                        if let Some(parent) = destination_path.parent() {
+                                                            filesystem.create_dir_all(&parent)?;
+                                                        }
+
+                                                        let writer = filesystem.create_file(&destination_path)?;
+                                                        let mut writer = CountingWriter::new_with_bytes_written(
+                                                            writer,
+                                                            progress.clone()
+                                                        );
+
+                                                        crate::io::copy_shared(
+                                                            &mut read_buffer,
+                                                            &mut entry,
+                                                            &mut writer,
+                                                        )?;
+                                                        writer.flush()?;
+                                                    }
+                                                    tar::EntryType::Symlink => {
+                                                        let link = entry
+                                                            .link_name()
+                                                            .unwrap_or_default()
+                                                            .unwrap_or_default();
+
+                                                        if let Err(err) =
+                                                            filesystem.create_symlink(&link, &destination_path)
+                                                        {
+                                                            tracing::debug!(
+                                                                path = %destination_path.display(),
+                                                                "failed to create symlink from archive: {:#?}",
+                                                                err
+                                                            );
+                                                        }
+                                                    }
+                                                    _ => {}
+                                                }
+                                            }
+
+                                            let mut inner = archive.into_inner().into_inner();
+                                            crate::io::copy_shared(
+                                                &mut read_buffer,
+                                                &mut inner,
+                                                &mut std::io::sink(),
+                                            )?;
+                                            archive_checksum = Some(inner.finish());
+                                        }
                                     }
                                     Some("checksum") => {
                                         let archive_checksum = match archive_checksum.take() {

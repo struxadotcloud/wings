@@ -19,6 +19,7 @@ use crate::{
     utils::PortablePermissions,
 };
 use chrono::{Datelike, Timelike};
+use itaf::encoder::{EncoderOptions, ItafEncoder, Metadata};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     io::{Read, Write},
@@ -1148,10 +1149,10 @@ impl VirtualReadableFilesystem for VirtualSevenZipArchive {
                     Ok(())
                 });
             }
-            _ => {
+            f if f.is_tar() => {
                 let writer = CompressionWriter::new(
                     tokio_util::io::SyncIoBridge::new(writer),
-                    archive_format.compression_format(),
+                    f.compression_format(),
                     compression_level,
                     self.server.app_state.config.api.file_compression_threads,
                 )?;
@@ -1241,6 +1242,157 @@ impl VirtualReadableFilesystem for VirtualSevenZipArchive {
 
                     Ok(())
                 });
+            }
+            f if f.is_itaf() => {
+                let writer = CompressionWriter::new(
+                    tokio_util::io::SyncIoBridge::new(writer),
+                    f.compression_format(),
+                    compression_level,
+                    self.server.app_state.config.api.file_compression_threads,
+                )?;
+
+                crate::spawn_blocking_handled(move || -> Result<(), anyhow::Error> {
+                    let mut itaf_enc = ItafEncoder::new(
+                        writer,
+                        EncoderOptions {
+                            base_timestamp: None,
+                            crc_enabled: true,
+                        },
+                    )?;
+
+                    let mut entries: Vec<(PathBuf, usize)> = Vec::new();
+                    for (i, entry) in archive.files.iter().enumerate() {
+                        if entry.is_directory() {
+                            continue;
+                        }
+                        let relative = match Path::new(entry.name()).strip_prefix(&path) {
+                            Ok(r) => r.to_path_buf(),
+                            Err(_) => continue,
+                        };
+                        if relative.components().count() == 0 {
+                            continue;
+                        }
+                        if (is_ignored)(
+                            VirtualSevenZipArchive::seven_zip_entry_to_file_type(entry),
+                            relative.clone(),
+                        )
+                        .is_none()
+                        {
+                            continue;
+                        }
+                        entries.push((relative, i));
+                    }
+                    entries.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+
+                    let mut dir_stack: Vec<compact_str::CompactString> = Vec::new();
+
+                    for (relative, entry_index) in entries {
+                        let components: Vec<compact_str::CompactString> = relative
+                            .components()
+                            .filter_map(|c| match c {
+                                std::path::Component::Normal(s) => Some(s.to_string_lossy().into()),
+                                _ => None,
+                            })
+                            .collect();
+                        if components.is_empty() {
+                            continue;
+                        }
+                        let name = components.last().unwrap().clone();
+                        let parent = &components[..components.len() - 1];
+
+                        let shared = dir_stack
+                            .iter()
+                            .zip(parent.iter())
+                            .take_while(|(a, b)| a == b)
+                            .count();
+                        while dir_stack.len() > shared {
+                            itaf_enc.exit_dir()?;
+                            dir_stack.pop();
+                        }
+                        for component in &parent[shared..] {
+                            itaf_enc.enter_dir(
+                                component,
+                                &Metadata {
+                                    uid: 0,
+                                    gid: 0,
+                                    mode: 0o755,
+                                    modified: std::time::SystemTime::now(),
+                                },
+                            )?;
+                            dir_stack.push(component.clone());
+                        }
+
+                        let entry = &archive.files[entry_index];
+                        let mtime = if entry.has_last_modified_date {
+                            std::time::SystemTime::from(entry.last_modified_date)
+                        } else {
+                            std::time::SystemTime::now()
+                        };
+                        let meta = Metadata {
+                            uid: 0,
+                            gid: 0,
+                            mode: 0o644,
+                            modified: mtime,
+                        };
+                        let size = entry.size;
+
+                        if let Some(block_index) = archive.stream_map.file_block_index[entry_index]
+                        {
+                            let password = sevenz_rust2::Password::empty();
+                            let folder = sevenz_rust2::BlockDecoder::new(
+                                1,
+                                block_index,
+                                &archive,
+                                &password,
+                                &mut reader,
+                            );
+
+                            folder
+                                .for_each_entries(&mut |block_entry, block_reader| {
+                                    if block_entry.name() != entry.name() {
+                                        std::io::copy(block_reader, &mut std::io::sink())?;
+                                        return Ok(true);
+                                    }
+
+                                    let src: Box<dyn Read> = match &bytes_archived {
+                                        Some(ba) => Box::new(CountingReader::new_with_bytes_read(
+                                            block_reader,
+                                            Arc::clone(ba),
+                                        )),
+                                        None => Box::new(block_reader),
+                                    };
+                                    let mut src =
+                                        crate::io::fixed_reader::FixedReader::new_with_fixed_bytes(
+                                            src,
+                                            size as usize,
+                                        );
+                                    itaf_enc.add_file(&name, &meta, size, &mut { src })?;
+
+                                    Ok(false)
+                                })
+                                .unwrap_or_default();
+                        } else {
+                            itaf_enc.add_file(&name, &meta, size, &mut std::io::empty())?;
+                        }
+                    }
+
+                    while !dir_stack.is_empty() {
+                        itaf_enc.exit_dir()?;
+                        dir_stack.pop();
+                    }
+
+                    let mut inner = itaf_enc.finish()?.finish()?;
+                    inner.flush()?;
+                    inner.shutdown()?;
+
+                    Ok(())
+                });
+            }
+            _ => {
+                tracing::error!(
+                    "unsupported archive format for 7z vfs: {}",
+                    archive_format.extension()
+                );
             }
         }
 

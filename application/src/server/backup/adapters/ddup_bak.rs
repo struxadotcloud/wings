@@ -20,6 +20,7 @@ use crate::{
 use chrono::{Datelike, Timelike};
 use ddup_bak::archive::entries::Entry;
 use ignore::{WalkBuilder, overrides::OverrideBuilder};
+use itaf::encoder::{EncoderOptions, ItafEncoder, Metadata};
 use sha1::Digest;
 use std::{
     io::Write,
@@ -187,6 +188,59 @@ impl DdupBakBackup {
             }
             Entry::Symlink(link) => {
                 zip.add_symlink(&link.name, &link.target, options)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn itaf_recursive_convert_entries<W: std::io::Write>(
+        entry: &Entry,
+        repository: &ddup_bak::repository::Repository,
+        itaf_enc: &mut ItafEncoder<W>,
+        parent_path: &Path,
+    ) -> Result<(), anyhow::Error> {
+        let path = parent_path.join(entry.name());
+
+        let mtime = entry
+            .mtime()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        let meta = Metadata {
+            uid: 0,
+            gid: 0,
+            mode: entry.mode().bits(),
+            modified: std::time::UNIX_EPOCH + mtime,
+        };
+        let name: compact_str::CompactString = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into();
+
+        match entry {
+            Entry::Directory(dir) => {
+                if itaf::spec::validate_name(&name).is_ok() {
+                    itaf_enc.enter_dir(&name, &meta)?;
+                    for child in &dir.entries {
+                        Self::itaf_recursive_convert_entries(child, repository, itaf_enc, &path)?;
+                    }
+                    itaf_enc.exit_dir()?;
+                }
+            }
+            Entry::File(file) => {
+                if itaf::spec::validate_name(&name).is_ok() {
+                    let mut reader = FixedReader::new_with_fixed_bytes(
+                        Box::new(repository.entry_reader(Entry::File(file.clone()))?),
+                        file.size_real as usize,
+                    );
+                    itaf_enc.add_file(&name, &meta, file.size_real, &mut { reader })?;
+                }
+            }
+            Entry::Symlink(link) => {
+                if itaf::spec::validate_name(&name).is_ok() {
+                    itaf_enc.add_symlink(&name, &link.target, false, &meta)?;
+                }
             }
         }
 
@@ -431,10 +485,10 @@ impl BackupExt for DdupBakBackup {
                     Ok(())
                 });
             }
-            _ => {
+            f if f.is_tar() => {
                 let writer = CompressionWriter::new(
                     tokio_util::io::SyncIoBridge::new(writer),
-                    archive_format.compression_format(),
+                    f.compression_format(),
                     compression_level,
                     state.config.api.file_compression_threads,
                 )?;
@@ -459,6 +513,45 @@ impl BackupExt for DdupBakBackup {
 
                     Ok(())
                 });
+            }
+            f if f.is_itaf() => {
+                let writer = CompressionWriter::new(
+                    tokio_util::io::SyncIoBridge::new(writer),
+                    f.compression_format(),
+                    compression_level,
+                    state.config.api.file_compression_threads,
+                )?;
+
+                crate::spawn_blocking_handled(move || -> Result<(), anyhow::Error> {
+                    let mut itaf_enc = ItafEncoder::new(
+                        writer,
+                        EncoderOptions {
+                            base_timestamp: None,
+                            crc_enabled: true,
+                        },
+                    )?;
+
+                    for entry in archive.entries.iter() {
+                        DdupBakBackup::itaf_recursive_convert_entries(
+                            entry,
+                            &repository,
+                            &mut itaf_enc,
+                            Path::new(""),
+                        )?;
+                    }
+
+                    let mut inner = itaf_enc.finish()?.finish()?;
+                    inner.flush()?;
+                    inner.shutdown()?;
+
+                    Ok(())
+                });
+            }
+            _ => {
+                tracing::error!(
+                    "unsupported archive format for ddup_bak backup download: {}",
+                    archive_format.extension()
+                );
             }
         }
 

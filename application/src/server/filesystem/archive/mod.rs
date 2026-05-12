@@ -128,6 +128,15 @@ pub enum StreamableArchiveFormat {
     TarBz2,
     TarLz4,
     TarZstd,
+
+    Itaf,
+    ItafGz,
+    ItafXz,
+    ItafLzip,
+    ItafBz2,
+    ItafLz4,
+    ItafZstd,
+
     Zip,
 }
 
@@ -135,13 +144,21 @@ impl StreamableArchiveFormat {
     #[inline]
     pub fn compression_format(self) -> CompressionType {
         match self {
-            StreamableArchiveFormat::Tar => CompressionType::None,
-            StreamableArchiveFormat::TarGz => CompressionType::Gz,
-            StreamableArchiveFormat::TarXz => CompressionType::Xz,
-            StreamableArchiveFormat::TarLzip => CompressionType::Lzip,
-            StreamableArchiveFormat::TarBz2 => CompressionType::Bz2,
-            StreamableArchiveFormat::TarLz4 => CompressionType::Lz4,
-            StreamableArchiveFormat::TarZstd => CompressionType::Zstd,
+            StreamableArchiveFormat::Tar | StreamableArchiveFormat::Itaf => CompressionType::None,
+            StreamableArchiveFormat::TarGz | StreamableArchiveFormat::ItafGz => CompressionType::Gz,
+            StreamableArchiveFormat::TarXz | StreamableArchiveFormat::ItafXz => CompressionType::Xz,
+            StreamableArchiveFormat::TarLzip | StreamableArchiveFormat::ItafLzip => {
+                CompressionType::Lzip
+            }
+            StreamableArchiveFormat::TarBz2 | StreamableArchiveFormat::ItafBz2 => {
+                CompressionType::Bz2
+            }
+            StreamableArchiveFormat::TarLz4 | StreamableArchiveFormat::ItafLz4 => {
+                CompressionType::Lz4
+            }
+            StreamableArchiveFormat::TarZstd | StreamableArchiveFormat::ItafZstd => {
+                CompressionType::Zstd
+            }
             StreamableArchiveFormat::Zip => CompressionType::None,
         }
     }
@@ -156,6 +173,13 @@ impl StreamableArchiveFormat {
             StreamableArchiveFormat::TarBz2 => "tar.bz2",
             StreamableArchiveFormat::TarLz4 => "tar.lz4",
             StreamableArchiveFormat::TarZstd => "tar.zst",
+            StreamableArchiveFormat::Itaf => "itaf",
+            StreamableArchiveFormat::ItafGz => "itaf.gz",
+            StreamableArchiveFormat::ItafXz => "itaf.xz",
+            StreamableArchiveFormat::ItafLzip => "itaf.lz",
+            StreamableArchiveFormat::ItafBz2 => "itaf.bz2",
+            StreamableArchiveFormat::ItafLz4 => "itaf.lz4",
+            StreamableArchiveFormat::ItafZstd => "itaf.zst",
             StreamableArchiveFormat::Zip => "zip",
         }
     }
@@ -164,14 +188,51 @@ impl StreamableArchiveFormat {
     pub fn mime_type(self) -> &'static str {
         match self {
             StreamableArchiveFormat::Tar => "application/x-tar",
-            StreamableArchiveFormat::TarGz => "application/gzip",
-            StreamableArchiveFormat::TarXz => "application/x-xz",
-            StreamableArchiveFormat::TarLzip => "application/x-lzip",
-            StreamableArchiveFormat::TarBz2 => "application/x-bzip2",
-            StreamableArchiveFormat::TarLz4 => "application/x-lz4",
-            StreamableArchiveFormat::TarZstd => "application/zstd",
+            StreamableArchiveFormat::TarGz | StreamableArchiveFormat::ItafGz => "application/gzip",
+            StreamableArchiveFormat::TarXz | StreamableArchiveFormat::ItafXz => "application/x-xz",
+            StreamableArchiveFormat::TarLzip | StreamableArchiveFormat::ItafLzip => {
+                "application/x-lzip"
+            }
+            StreamableArchiveFormat::TarBz2 | StreamableArchiveFormat::ItafBz2 => {
+                "application/x-bzip2"
+            }
+            StreamableArchiveFormat::TarLz4 | StreamableArchiveFormat::ItafLz4 => {
+                "application/x-lz4"
+            }
+            StreamableArchiveFormat::TarZstd | StreamableArchiveFormat::ItafZstd => {
+                "application/zstd"
+            }
+            StreamableArchiveFormat::Itaf => "application/octet-stream",
             StreamableArchiveFormat::Zip => "application/zip",
         }
+    }
+
+    #[inline]
+    pub const fn is_tar(self) -> bool {
+        matches!(
+            self,
+            StreamableArchiveFormat::Tar
+                | StreamableArchiveFormat::TarGz
+                | StreamableArchiveFormat::TarXz
+                | StreamableArchiveFormat::TarLzip
+                | StreamableArchiveFormat::TarBz2
+                | StreamableArchiveFormat::TarLz4
+                | StreamableArchiveFormat::TarZstd
+        )
+    }
+
+    #[inline]
+    pub const fn is_itaf(self) -> bool {
+        matches!(
+            self,
+            StreamableArchiveFormat::Itaf
+                | StreamableArchiveFormat::ItafGz
+                | StreamableArchiveFormat::ItafXz
+                | StreamableArchiveFormat::ItafLzip
+                | StreamableArchiveFormat::ItafBz2
+                | StreamableArchiveFormat::ItafLz4
+                | StreamableArchiveFormat::ItafZstd
+        )
     }
 }
 
