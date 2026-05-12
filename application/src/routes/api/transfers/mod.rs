@@ -714,140 +714,179 @@ mod post {
                 },
             );
 
+            let (result_tx, result_rx) = tokio::sync::oneshot::channel::<bool>();
+
             if multiplex_stream_count > 0 {
-                let mut tries = 0;
+                tokio::spawn({
+                    let server = server.clone();
+                    let state = state.clone();
+                    async move {
+                        let mut tries = 0;
 
-                loop {
-                    let mut server_transfer = server.incoming_transfer.write().await;
+                        loop {
+                            {
+                                let guard = server.incoming_transfer.read().await;
+                                if guard.as_ref().is_some_and(|t| {
+                                    t.multiplex_handles.len() >= multiplex_stream_count
+                                }) {
+                                    break;
+                                }
+                            }
+                            tries += 1;
+                            if tries > 10 {
+                                tracing::error!(
+                                    server = %server.uuid,
+                                    "timed out waiting for multiplex streams to connect"
+                                );
+                                state
+                                    .config
+                                    .client
+                                    .set_server_transfer(subject, false, vec![])
+                                    .await
+                                    .ok();
 
-                    tries += 1;
-
-                    let incoming_transfer = match &mut *server_transfer {
-                        Some(transfer) => transfer,
-                        None => {
-                            return ApiResponse::error(
-                                "unable to get incoming transfer for multiplex",
-                            )
-                            .with_status(StatusCode::CONFLICT)
-                            .ok();
-                        }
-                    };
-
-                    if incoming_transfer.multiplex_handles.len() != multiplex_stream_count {
-                        if tries > 10 {
-                            return ApiResponse::error(
-                                "unable to get incoming transfer for multiplex join",
-                            )
-                            .with_status(StatusCode::CONFLICT)
-                            .ok();
-                        } else {
+                                result_tx.send(false).ok();
+                                return;
+                            }
                             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                            continue;
+                        }
+
+                        let mut incoming = match server.incoming_transfer.write().await.take() {
+                            Some(t) => t,
+                            None => {
+                                result_tx.send(false).ok();
+                                return;
+                            }
+                        };
+
+                        match incoming.try_join_handles(handle).await {
+                            Ok(backups) => {
+                                tracing::info!(
+                                    server = %server.uuid,
+                                    "server transfer completed successfully"
+                                );
+                                if state
+                                    .config
+                                    .client
+                                    .set_server_transfer(subject, true, backups)
+                                    .await
+                                    .is_ok()
+                                {
+                                    server.transferring.store(false, Ordering::SeqCst);
+                                    server
+                                        .websocket
+                                        .send(crate::server::websocket::WebsocketMessage::new(
+                                            crate::server::websocket::WebsocketEvent::ServerTransferStatus,
+                                            ["completed".into()].into(),
+                                        ))
+                                        .ok();
+                                    result_tx.send(true).ok();
+                                } else {
+                                    state
+                                        .config
+                                        .client
+                                        .set_server_transfer(subject, false, vec![])
+                                        .await
+                                        .ok();
+
+                                    result_tx.send(false).ok();
+                                }
+                            }
+                            Err(err) => {
+                                tracing::error!(
+                                    server = %server.uuid,
+                                    "failed to complete server transfer: {:#?}",
+                                    err
+                                );
+                                state
+                                    .config
+                                    .client
+                                    .set_server_transfer(subject, false, vec![])
+                                    .await
+                                    .ok();
+
+                                result_tx.send(false).ok();
+                            }
                         }
                     }
-
-                    match incoming_transfer.try_join_handles(handle).await {
-                        Ok(backups) => {
-                            tracing::info!(
-                                server = %server.uuid,
-                                "server transfer completed successfully"
-                            );
-
-                            state
-                                .config
-                                .client
-                                .set_server_transfer(subject, true, backups)
-                                .await?;
-                            server.transferring.store(false, Ordering::SeqCst);
-                            server
-                                .websocket
-                                .send(crate::server::websocket::WebsocketMessage::new(
-                                    crate::server::websocket::WebsocketEvent::ServerTransferStatus,
-                                    ["completed".into()].into(),
-                                ))
-                                .ok();
-                        }
-                        Err(err) => {
-                            tracing::error!(
-                                server = %server.uuid,
-                                "failed to complete server transfer: {:#?}",
-                                err
-                            );
-
-                            state
-                                .config
-                                .client
-                                .set_server_transfer(subject, false, vec![])
-                                .await
-                                .unwrap_or_default();
-
-                            return ApiResponse::error("failed to complete server transfer")
-                                .with_status(StatusCode::EXPECTATION_FAILED)
-                                .ok();
-                        }
-                    }
-
-                    break;
-                }
+                });
             } else {
-                match handle.await {
-                    Ok(Ok(backups)) => {
-                        tracing::info!(
-                            server = %server.uuid,
-                            "server transfer completed successfully"
-                        );
+                tokio::spawn({
+                    let server = server.clone();
+                    let state = state.clone();
+                    async move {
+                        match handle.await {
+                            Ok(Ok(backups)) => {
+                                tracing::info!(
+                                    server = %server.uuid,
+                                    "server transfer completed successfully"
+                                );
+                                if state
+                                    .config
+                                    .client
+                                    .set_server_transfer(subject, true, backups)
+                                    .await
+                                    .is_ok()
+                                {
+                                    server.transferring.store(false, Ordering::SeqCst);
+                                    server
+                                        .websocket
+                                        .send(crate::server::websocket::WebsocketMessage::new(
+                                            crate::server::websocket::WebsocketEvent::ServerTransferStatus,
+                                            ["completed".into()].into(),
+                                        ))
+                                        .ok();
+                                    result_tx.send(true).ok();
+                                } else {
+                                    state
+                                        .config
+                                        .client
+                                        .set_server_transfer(subject, false, vec![])
+                                        .await
+                                        .ok();
 
-                        state
-                            .config
-                            .client
-                            .set_server_transfer(subject, true, backups)
-                            .await?;
-                        server.transferring.store(false, Ordering::SeqCst);
-                        server
-                            .websocket
-                            .send(crate::server::websocket::WebsocketMessage::new(
-                                crate::server::websocket::WebsocketEvent::ServerTransferStatus,
-                                ["completed".into()].into(),
-                            ))
-                            .ok();
+                                    result_tx.send(false).ok();
+                                }
+                            }
+                            Ok(Err(err)) => {
+                                tracing::error!(
+                                    server = %server.uuid,
+                                    "failed to complete server transfer: {:#?}",
+                                    err
+                                );
+                                state
+                                    .config
+                                    .client
+                                    .set_server_transfer(subject, false, vec![])
+                                    .await
+                                    .ok();
+
+                                result_tx.send(false).ok();
+                            }
+                            Err(err) => {
+                                tracing::error!(
+                                    server = %server.uuid,
+                                    "failed to complete server transfer: {:#?}",
+                                    err
+                                );
+                                state
+                                    .config
+                                    .client
+                                    .set_server_transfer(subject, false, vec![])
+                                    .await
+                                    .ok();
+
+                                result_tx.send(false).ok();
+                            }
+                        }
                     }
-                    Ok(Err(err)) => {
-                        tracing::error!(
-                            server = %server.uuid,
-                            "failed to complete server transfer: {:#?}",
-                            err
-                        );
+                });
+            }
 
-                        state
-                            .config
-                            .client
-                            .set_server_transfer(subject, false, vec![])
-                            .await
-                            .unwrap_or_default();
-
-                        return ApiResponse::error("failed to complete server transfer")
-                            .with_status(StatusCode::EXPECTATION_FAILED)
-                            .ok();
-                    }
-                    Err(err) => {
-                        tracing::error!(
-                            server = %server.uuid,
-                            "failed to complete server transfer: {:#?}",
-                            err
-                        );
-
-                        state
-                            .config
-                            .client
-                            .set_server_transfer(subject, false, vec![])
-                            .await
-                            .unwrap_or_default();
-
-                        return ApiResponse::error("failed to complete server transfer")
-                            .with_status(StatusCode::EXPECTATION_FAILED)
-                            .ok();
-                    }
-                }
+            if !result_rx.await.unwrap_or(false) {
+                return ApiResponse::error("failed to complete server transfer")
+                    .with_status(StatusCode::EXPECTATION_FAILED)
+                    .ok();
             }
         }
 
