@@ -47,12 +47,17 @@ impl WingsBackup {
         uuid: uuid::Uuid,
         format: ArchiveFormat,
     ) -> PathBuf {
-        Path::new(&config.system.backup_directory).join(format!("{uuid}.{}", format.extension()))
+        Path::new(&config.load().system.backup_directory)
+            .join(format!("{uuid}.{}", format.extension()))
     }
 
     #[inline]
     fn get_file_name(config: &crate::config::Config, uuid: uuid::Uuid) -> PathBuf {
-        Self::get_format_file_name(config, uuid, config.system.backups.wings.archive_format)
+        Self::get_format_file_name(
+            config,
+            uuid,
+            config.load().system.backups.wings.archive_format,
+        )
     }
 
     #[inline]
@@ -149,13 +154,22 @@ impl BackupCreateExt for WingsBackup {
                 server
                     .app_state
                     .config
+                    .load()
                     .system
                     .backups
                     .write_limit
                     .as_bytes(),
             );
 
-            let file = match server.app_state.config.system.backups.wings.archive_format {
+            let file = match server
+                .app_state
+                .config
+                .load()
+                .system
+                .backups
+                .wings
+                .archive_format
+            {
                 ArchiveFormat::Tar
                 | ArchiveFormat::TarGz
                 | ArchiveFormat::TarXz
@@ -174,6 +188,7 @@ impl BackupCreateExt for WingsBackup {
                             compression_type: server
                                 .app_state
                                 .config
+                                .load()
                                 .system
                                 .backups
                                 .wings
@@ -182,10 +197,18 @@ impl BackupCreateExt for WingsBackup {
                             compression_level: server
                                 .app_state
                                 .config
+                                .load()
                                 .system
                                 .backups
                                 .compression_level,
-                            threads: server.app_state.config.system.backups.wings.create_threads,
+                            threads: server
+                                .app_state
+                                .config
+                                .load()
+                                .system
+                                .backups
+                                .wings
+                                .create_threads,
                         },
                     )
                     .await
@@ -202,6 +225,7 @@ impl BackupCreateExt for WingsBackup {
                             compression_level: server
                                 .app_state
                                 .config
+                                .load()
                                 .system
                                 .backups
                                 .compression_level,
@@ -221,10 +245,18 @@ impl BackupCreateExt for WingsBackup {
                             compression_level: server
                                 .app_state
                                 .config
+                                .load()
                                 .system
                                 .backups
                                 .compression_level,
-                            threads: server.app_state.config.system.backups.wings.create_threads,
+                            threads: server
+                                .app_state
+                                .config
+                                .load()
+                                .system
+                                .backups
+                                .wings
+                                .create_threads,
                         },
                     )
                     .await
@@ -264,7 +296,14 @@ impl BackupCreateExt for WingsBackup {
             files: total_files,
             successful: true,
             browsable: matches!(
-                server.app_state.config.system.backups.wings.archive_format,
+                server
+                    .app_state
+                    .config
+                    .load()
+                    .system
+                    .backups
+                    .wings
+                    .archive_format,
                 ArchiveFormat::Zip | ArchiveFormat::SevenZip
             ),
             streaming: false,
@@ -348,13 +387,25 @@ impl BackupExt for WingsBackup {
 
                     let reader = LimitedReader::new_with_bytes_per_second(
                         file,
-                        server.app_state.config.system.backups.read_limit.as_bytes(),
+                        server
+                            .app_state
+                            .config
+                            .load()
+                            .system
+                            .backups
+                            .read_limit
+                            .as_bytes(),
                     );
                     let reader = CountingReader::new_with_bytes_read(reader, progress);
                     let reader = CompressionReaderMt::new(
                         reader,
                         compression_type,
-                        server.app_state.config.api.file_decompression_threads,
+                        server
+                            .app_state
+                            .config
+                            .load()
+                            .api
+                            .file_decompression_threads,
                     )?;
 
                     let mut archive = tar::Archive::new(reader);
@@ -476,7 +527,7 @@ impl BackupExt for WingsBackup {
                     }
 
                     let pool = rayon::ThreadPoolBuilder::new()
-                        .num_threads(server.app_state.config.system.backups.wings.restore_threads)
+                        .num_threads(server.app_state.config.load().system.backups.wings.restore_threads)
                         .build()?;
 
                     let error = Arc::new(RwLock::new(None));
@@ -633,7 +684,7 @@ impl BackupExt for WingsBackup {
                     );
 
                     let pool = rayon::ThreadPoolBuilder::new()
-                        .num_threads(server.app_state.config.system.backups.wings.restore_threads)
+                        .num_threads(server.app_state.config.load().system.backups.wings.restore_threads)
                         .build()?;
 
                     let error = Arc::new(RwLock::new(None));

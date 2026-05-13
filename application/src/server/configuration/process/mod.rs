@@ -238,8 +238,8 @@ impl ServerConfigurationFile {
             return Ok(compact_str::CompactString::default());
         }
 
-        let config_json =
-            serde_json::to_value(&**config).context("failed to serialize Wings configuration")?;
+        let config_json = serde_json::to_value(&**config.load())
+            .context("failed to serialize Wings configuration")?;
 
         let mut current = &config_json;
         for part in parts {

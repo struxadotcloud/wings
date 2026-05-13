@@ -45,7 +45,7 @@ mod post {
         state: GetState,
         crate::Payload(mut patch): crate::Payload<serde_json::Value>,
     ) -> ApiResponseResult {
-        if state.config.ignore_panel_config_updates {
+        if state.config.load().ignore_panel_config_updates {
             return ApiResponse::new_serialized(Response { applied: false }).ok();
         }
 
@@ -81,7 +81,7 @@ mod post {
 
         strip_paths(&mut patch, FORBIDDEN_PATHS);
 
-        let mut doc = match serde_json::to_value(state.config.unsafe_ref()) {
+        let mut doc = match serde_json::to_value(&**state.config.load()) {
             Ok(doc) => doc,
             Err(err) => {
                 tracing::error!("failed to serialize current config: {err}");
@@ -102,22 +102,8 @@ mod post {
             }
         };
 
-        let old_config = std::mem::replace(state.config.unsafe_mut(), new_config);
-
-        if let Err(err) = state.config.validate() {
-            *state.config.unsafe_mut() = old_config;
-
-            return ApiResponse::error(&format!("config patch failed validation: {err}"))
-                .with_status(axum::http::StatusCode::BAD_REQUEST)
-                .ok();
-        }
-
-        let state_clone = state.clone();
-        if let Err(err) = tokio::task::spawn_blocking(move || state_clone.config.save()).await? {
-            tracing::error!("failed to save config: {:?}", err);
-            *state.config.unsafe_mut() = old_config;
-
-            return ApiResponse::error("failed to save config")
+        if let Err(err) = state.config.replace(new_config) {
+            return ApiResponse::error(&format!("failed to apply config patch: {err}"))
                 .with_status(axum::http::StatusCode::INTERNAL_SERVER_ERROR)
                 .ok();
         }

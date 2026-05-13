@@ -232,7 +232,11 @@ impl Filesystem {
 
     #[inline]
     pub fn get_disk_limiter<'a>(&'a self) -> Box<dyn limiter::DiskLimiterExt + 'a> {
-        self.config.system.disk_limiter_mode.get_limiter(self)
+        self.config
+            .load()
+            .system
+            .disk_limiter_mode
+            .get_limiter(self)
     }
 
     #[inline]
@@ -303,18 +307,19 @@ impl Filesystem {
         let path = self.relative_path(path);
 
         'backupfs: {
-            if !self.config.system.backups.mounting.enabled {
+            if !self.config.load().system.backups.mounting.enabled {
                 break 'backupfs;
             }
 
-            if !path.starts_with(&self.config.system.backups.mounting.path) {
+            if !path.starts_with(&self.config.load().system.backups.mounting.path) {
                 break 'backupfs;
             }
 
-            let backup_path = match path.strip_prefix(&self.config.system.backups.mounting.path) {
-                Ok(p) => p,
-                Err(_) => break 'backupfs,
-            };
+            let backup_path =
+                match path.strip_prefix(&self.config.load().system.backups.mounting.path) {
+                    Ok(p) => p,
+                    Err(_) => break 'backupfs,
+                };
             let uuid: uuid::Uuid = match backup_path
                 .components()
                 .next()
@@ -454,7 +459,6 @@ impl Filesystem {
 
         let (mount_match, mount_infos) = {
             let server_config = server.configuration.read().await;
-            let allowed_mounts = &server.app_state.config.allowed_mounts;
 
             let mut match_result = None;
             let mut infos = Vec::new();
@@ -464,7 +468,11 @@ impl Filesystem {
                     continue;
                 };
                 if relative_target.is_empty()
-                    || allowed_mounts
+                    || server
+                        .app_state
+                        .config
+                        .load()
+                        .allowed_mounts
                         .iter()
                         .all(|am| !mount.source.starts_with(&**am))
                 {
@@ -533,7 +541,6 @@ impl Filesystem {
 
         let mount_match = {
             let server_config = server.configuration.read().await;
-            let allowed_mounts = &server.app_state.config.allowed_mounts;
 
             let mut result: Option<(PathBuf, PathBuf, bool)> = None;
             for mount in &server_config.mounts {
@@ -543,7 +550,11 @@ impl Filesystem {
                 if relative_target.is_empty() {
                     continue;
                 }
-                if allowed_mounts
+                if server
+                    .app_state
+                    .config
+                    .load()
+                    .allowed_mounts
                     .iter()
                     .all(|am| !mount.source.starts_with(&**am))
                 {
@@ -743,7 +754,7 @@ impl Filesystem {
 
             walker
                 .run_multithreaded(
-                    server.app_state.config.api.file_copy_threads,
+                    server.app_state.config.load().api.file_copy_threads,
                     DirectoryStreamWalkFn::from({
                         let server = server.clone();
                         let filesystem = filesystem.clone();
@@ -1007,7 +1018,7 @@ impl Filesystem {
     }
 
     pub async fn chown_path(&self, path: impl AsRef<Path>) -> Result<(), anyhow::Error> {
-        if self.config.system.user.rootless.enabled {
+        if self.config.load().system.user.rootless.enabled {
             return Ok(());
         }
 
@@ -1017,8 +1028,8 @@ impl Filesystem {
 
             let metadata = self.async_metadata(path.as_ref()).await?;
 
-            let owner_uid = rustix::fs::Uid::from_raw_unchecked(self.config.system.user.uid);
-            let owner_gid = rustix::fs::Gid::from_raw_unchecked(self.config.system.user.gid);
+            let owner_uid = rustix::fs::Uid::from_raw_unchecked(self.config.load().system.user.uid);
+            let owner_gid = rustix::fs::Gid::from_raw_unchecked(self.config.load().system.user.gid);
 
             tokio::task::spawn_blocking({
                 let cap_filesystem = self.cap_filesystem.clone();
@@ -1051,7 +1062,7 @@ impl Filesystem {
                 self.async_walk_dir(path)
                     .await?
                     .run_multithreaded(
-                        self.config.system.check_permissions_on_boot_threads,
+                        self.config.load().system.check_permissions_on_boot_threads,
                         Arc::new(move |_, path: PathBuf| {
                             let cap_filesystem = cap_filesystem.clone();
 
@@ -1116,7 +1127,7 @@ impl Filesystem {
             {
                 Ok(Ok(dir)) => {
                     *self.cap_filesystem.inner.write().await = Some(Arc::new(dir));
-                    if self.app_state.config.system.disk_check_use_inotify {
+                    if self.app_state.config.load().system.disk_check_use_inotify {
                         if let Err(err) = self
                             .app_state
                             .inotify_manager
@@ -1168,7 +1179,7 @@ impl Filesystem {
             {
                 Ok(Ok(dir)) => {
                     *self.cap_filesystem.inner.write().await = Some(Arc::new(dir));
-                    if self.app_state.config.system.disk_check_use_inotify {
+                    if self.app_state.config.load().system.disk_check_use_inotify {
                         if let Err(err) = self
                             .app_state
                             .inotify_manager
@@ -1231,7 +1242,7 @@ impl Filesystem {
         let real_path = symlink_destination.as_ref().unwrap_or(&path);
 
         let (size, size_physical) = if real_metadata.is_dir() {
-            if !no_directory_size && !self.config.api.disable_directory_size {
+            if !no_directory_size && !self.config.load().api.disable_directory_size {
                 let space = self.disk_usage.read().await.get_size(real_path);
 
                 space.map_or((0, 0), |s| (s.get_logical(), s.get_physical()))
@@ -1311,7 +1322,7 @@ impl Filesystem {
         let real_path = symlink_destination.as_ref().unwrap_or(&path);
 
         let (size, size_physical) = if real_metadata.is_dir() {
-            if !no_directory_size && !self.config.api.disable_directory_size {
+            if !no_directory_size && !self.config.load().api.disable_directory_size {
                 let space = self.disk_usage.read().await.get_size(real_path);
 
                 space.map_or((0, 0), |s| (s.get_logical(), s.get_physical()))

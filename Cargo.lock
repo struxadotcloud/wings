@@ -6025,6 +6025,7 @@ dependencies = [
  "accept-header",
  "ansi_term",
  "anyhow",
+ "arc-swap",
  "async-channel",
  "async-trait",
  "axum",

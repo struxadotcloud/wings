@@ -44,7 +44,7 @@ mod post {
             .ok();
         }
 
-        if state.config.ignore_panel_wings_upgrades {
+        if state.config.load().ignore_panel_wings_upgrades {
             return ApiResponse::new_serialized(Response { applied: false }).ok();
         }
 

@@ -61,6 +61,7 @@ impl Iterator for SocketAddrs {
 
         for cidr in self
             .borrow_config()
+            .load()
             .api
             .remote_download_blocked_cidrs
             .iter()

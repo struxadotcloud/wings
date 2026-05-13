@@ -62,7 +62,7 @@ mod post {
             &server,
             data.archive_format,
             data.compression_level
-                .unwrap_or(state.config.system.backups.compression_level),
+                .unwrap_or_else(|| state.config.load().system.backups.compression_level),
         );
 
         if transfer

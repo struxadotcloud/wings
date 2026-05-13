@@ -109,48 +109,49 @@ mod post {
         let progress = Arc::new(AtomicU64::new(0));
         let total = Arc::new(AtomicU64::new(0));
 
-        let (identifier, task) = server
-            .filesystem
-            .operations
-            .add_operation(
-                crate::server::filesystem::operations::FilesystemOperation::Compress {
-                    path: PathBuf::from(&data.root),
-                    files: data.files.iter().map(PathBuf::from).collect(),
-                    destination_path: PathBuf::from(&data.root).join(archive_name),
-                    start_time: chrono::Utc::now(),
-                    progress: progress.clone(),
-                    total: total.clone(),
-                },
-                {
-                    let root = root.clone();
-                    let server = server.0.clone();
-                    let filesystem = filesystem.clone();
-                    let destination_path = destination_path.clone();
-                    let destination_filesystem = destination_filesystem.clone();
+        let (identifier, task) =
+            server
+                .filesystem
+                .operations
+                .add_operation(
+                    crate::server::filesystem::operations::FilesystemOperation::Compress {
+                        path: PathBuf::from(&data.root),
+                        files: data.files.iter().map(PathBuf::from).collect(),
+                        destination_path: PathBuf::from(&data.root).join(archive_name),
+                        start_time: chrono::Utc::now(),
+                        progress: progress.clone(),
+                        total: total.clone(),
+                    },
+                    {
+                        let root = root.clone();
+                        let server = server.0.clone();
+                        let filesystem = filesystem.clone();
+                        let destination_path = destination_path.clone();
+                        let destination_filesystem = destination_filesystem.clone();
 
-                    async move {
-                        let ignored = server.filesystem.get_ignored().await;
-                        let writer = tokio::task::spawn_blocking(move || {
-                            destination_filesystem.create_seekable_file(&destination_path)
-                        })
-                        .await??;
+                        async move {
+                            let ignored = server.filesystem.get_ignored().await;
+                            let writer = tokio::task::spawn_blocking(move || {
+                                destination_filesystem.create_seekable_file(&destination_path)
+                            })
+                            .await??;
 
-                        let mut total_size = 0;
-                        for file in &data.files {
-                            let directory_entry = match filesystem
-                                .async_directory_entry_buffer(&root.join(file), &[])
-                                .await
-                            {
-                                Ok(entry) => entry,
-                                Err(_) => continue,
-                            };
+                            let mut total_size = 0;
+                            for file in &data.files {
+                                let directory_entry = match filesystem
+                                    .async_directory_entry_buffer(&root.join(file), &[])
+                                    .await
+                                {
+                                    Ok(entry) => entry,
+                                    Err(_) => continue,
+                                };
 
-                            total_size += directory_entry.size;
-                        }
+                                total_size += directory_entry.size;
+                            }
 
-                        total.store(total_size, std::sync::atomic::Ordering::Relaxed);
+                            total.store(total_size, std::sync::atomic::Ordering::Relaxed);
 
-                        match data.format {
+                            match data.format {
                             ArchiveFormat::Tar
                             | ArchiveFormat::TarGz
                             | ArchiveFormat::TarXz
@@ -167,12 +168,11 @@ mod post {
                                     ignored.into(),
                                     crate::server::filesystem::archive::create::CreateTarOptions {
                                         compression_type: data.format.compression_format(),
-                                        compression_level: state
-                                            .config
+                                        compression_level: state.config.load()
                                             .system
                                             .backups
                                             .compression_level,
-                                        threads: state.config.api.file_compression_threads,
+                                        threads: state.config.load().api.file_compression_threads,
                                     },
                                 )
                                 .await
@@ -186,8 +186,7 @@ mod post {
                                     Some(progress),
                                     ignored.into(),
                                     crate::server::filesystem::archive::create::CreateZipOptions {
-                                        compression_level: state
-                                            .config
+                                        compression_level: state.config.load()
                                             .system
                                             .backups
                                             .compression_level,
@@ -204,23 +203,22 @@ mod post {
                                     Some(progress),
                                     ignored.into(),
                                     crate::server::filesystem::archive::create::Create7zOptions {
-                                        compression_level: state
-                                            .config
+                                        compression_level: state.config.load()
                                             .system
                                             .backups
                                             .compression_level,
-                                        threads: state.config.api.file_compression_threads,
+                                        threads: state.config.load().api.file_compression_threads,
                                     },
                                 )
                                 .await
                             }
                         }?;
 
-                        Ok(())
-                    }
-                },
-            )
-            .await;
+                            Ok(())
+                        }
+                    },
+                )
+                .await;
 
         if data.foreground {
             match task.await {

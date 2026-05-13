@@ -149,7 +149,7 @@ async fn handle_cors(
     );
     headers.insert("Access-Control-Allow-Headers", HeaderValue::from_static("Accept, Accept-Encoding, Authorization, Cache-Control, Content-Type, Content-Length, Origin, X-Real-IP, X-CSRF-Token"));
 
-    if state.config.allow_cors_private_network {
+    if state.config.load().allow_cors_private_network {
         headers.insert(
             "Access-Control-Request-Private-Network",
             HeaderValue::from_static("true"),
@@ -159,9 +159,9 @@ async fn handle_cors(
     headers.insert("Access-Control-Max-Age", HeaderValue::from_static("7200"));
 
     if let Some(origin) = req.headers().get("Origin")
-        && origin.to_str().ok() != Some(state.config.remote.as_str())
+        && origin.to_str().ok() != Some(state.config.load().remote.as_str())
     {
-        for o in state.config.allowed_origins.iter() {
+        for o in state.config.load().allowed_origins.iter() {
             if o == "*" || origin.to_str().ok() == Some(o.as_str()) {
                 if let Ok(o) = o.parse() {
                     headers.insert("Access-Control-Allow-Origin", o);
@@ -173,7 +173,7 @@ async fn handle_cors(
     }
 
     if !headers.contains_key("Access-Control-Allow-Origin") {
-        if let Ok(origin) = state.config.remote.parse() {
+        if let Ok(origin) = state.config.load().remote.parse() {
             headers.insert("Access-Control-Allow-Origin", origin);
         } else {
             return Ok(ApiResponse::error("invalid remote URL configured")
@@ -328,19 +328,20 @@ async fn main() {
     });
 
     tracing::info!("connecting to docker");
-    let docker =
-        Arc::new(
-            if config.docker.socket.starts_with("http://")
-                || config.docker.socket.starts_with("tcp://")
+    let executor = {
+        let config_ref = config.load();
+        let docker = Arc::new(
+            if config_ref.docker.socket.starts_with("http://")
+                || config_ref.docker.socket.starts_with("tcp://")
             {
                 bollard::Docker::connect_with_http(
-                    &config.docker.socket,
+                    &config_ref.docker.socket,
                     120,
                     bollard::API_DEFAULT_VERSION,
                 )
             } else {
                 bollard::Docker::connect_with_local(
-                    &config.docker.socket,
+                    &config_ref.docker.socket,
                     120,
                     bollard::API_DEFAULT_VERSION,
                 )
@@ -348,10 +349,12 @@ async fn main() {
             .context("failed to connect to docker")
             .unwrap(),
         );
-    let executor = Arc::new(crate::server::executor::docker::DockerExecutor::new(
-        docker,
-        config.clone(),
-    ));
+
+        Arc::new(crate::server::executor::docker::DockerExecutor::new(
+            docker,
+            config.clone(),
+        ))
+    };
 
     tracing::info!("running server executor boot tasks");
     if let Err(err) = executor.boot().await {
@@ -406,7 +409,8 @@ async fn main() {
     let app = OpenApiRouter::new()
         .merge(crate::routes::router(&state))
         .fallback(|state: GetState, req: Request| async move {
-            if let Some(redirect) = state.config.api.redirects.get(req.uri().path()) {
+            let config = state.config.load();
+            if let Some(redirect) = config.api.redirects.get(req.uri().path()) {
                 return ApiResponse::new(Body::empty())
                     .with_status(StatusCode::FOUND)
                     .with_header("Location", redirect)
@@ -427,7 +431,7 @@ async fn main() {
     let (mut router, mut openapi) = app.split_for_parts();
     openapi.info.version = "1.0.0".into();
     openapi.info.description = None;
-    openapi.info.title = format!("{} Wings API", config.app_name);
+    openapi.info.title = format!("{} Wings API", config.load().app_name);
     openapi.info.contact = None;
     openapi.info.license = None;
     openapi.components.as_mut().unwrap().add_security_scheme(
@@ -455,7 +459,7 @@ async fn main() {
         }
     }
 
-    if !config.api.disable_openapi_docs {
+    if !config.load().api.disable_openapi_docs {
         router = router.route(
             "/openapi.json",
             axum::routing::get(|| async move { axum::Json(openapi) }),
@@ -466,7 +470,7 @@ async fn main() {
         .install_default()
         .expect("Failed to install rustls crypto provider");
 
-    if config.system.sftp.enabled {
+    if config.load().system.sftp.enabled {
         tracing::info!("starting ssh server");
 
         tokio::spawn({
@@ -475,11 +479,17 @@ async fn main() {
             async move {
                 let mut server = crate::ssh::Server::new(Arc::clone(&state));
 
-                let key_file = Path::new(&state.config.system.data_directory)
+                let key_file = Path::new(&state.config.load().system.data_directory)
                     .join(".sftp")
                     .join(format!(
                         "id_{}",
-                        state.config.system.sftp.key_algorithm.replace("-", "_")
+                        state
+                            .config
+                            .load()
+                            .system
+                            .sftp
+                            .key_algorithm
+                            .replace("-", "_")
                     ));
                 let key = match tokio::fs::read(&key_file)
                     .await
@@ -496,7 +506,7 @@ async fn main() {
                     }
                     _ => {
                         tracing::info!(
-                            algorithm = %state.config.system.sftp.key_algorithm,
+                            algorithm = %state.config.load().system.sftp.key_algorithm,
                             "generating new sftp host key"
                         );
 
@@ -504,6 +514,7 @@ async fn main() {
                             &mut rand::rngs::ThreadRng::default(),
                             state
                                 .config
+                                .load()
                                 .system
                                 .sftp
                                 .key_algorithm
@@ -552,8 +563,8 @@ async fn main() {
                 };
 
                 let address = SocketAddr::from((
-                    state.config.system.sftp.bind_address,
-                    state.config.system.sftp.bind_port,
+                    state.config.load().system.sftp.bind_address,
+                    state.config.load().system.sftp.bind_port,
                 ));
 
                 tracing::info!(
@@ -590,15 +601,15 @@ async fn main() {
         }
     });
 
-    if let Ok(host) = state.config.api.host.parse::<std::net::IpAddr>() {
-        let address = SocketAddr::from((host, state.config.api.port));
+    if let Ok(host) = state.config.load().api.host.parse::<std::net::IpAddr>() {
+        let address = SocketAddr::from((host, state.config.load().api.port));
 
-        if config.api.ssl.enabled {
+        if config.load().api.ssl.enabled {
             tracing::info!("loading ssl certs");
 
             let rustls_config = axum_server::tls_rustls::RustlsConfig::from_pem_file(
-                config.api.ssl.cert.as_str(),
-                config.api.ssl.key.as_str(),
+                config.load().api.ssl.cert.as_str(),
+                config.load().api.ssl.key.as_str(),
             )
             .await
             .context("failed to load SSL certificate and key")
@@ -615,8 +626,8 @@ async fn main() {
 
                         if let Err(err) = rustls_config
                             .reload_from_pem_file(
-                                config.api.ssl.cert.as_str(),
-                                config.api.ssl.key.as_str(),
+                                config.load().api.ssl.cert.as_str(),
+                                config.load().api.ssl.key.as_str(),
                             )
                             .await
                         {
@@ -680,7 +691,7 @@ async fn main() {
     } else {
         #[cfg(unix)]
         {
-            let socket_path = &state.config.api.host;
+            let socket_path = state.config.load().api.host.clone();
 
             tracing::info!("http server listening on {}", socket_path);
 
@@ -694,8 +705,7 @@ async fn main() {
                 },
             ));
 
-            let _ = tokio::fs::remove_file(socket_path).await;
-
+            let _ = tokio::fs::remove_file(&socket_path).await;
             let listener = tokio::net::UnixListener::bind(socket_path).unwrap();
 
             axum::serve(listener, router.into_make_service())

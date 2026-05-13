@@ -96,6 +96,7 @@ impl<'a> FuseQuotaLimiter<'a> {
             .arg(
                 self.filesystem
                     .config
+                    .load()
                     .system
                     .disk_check_interval
                     .to_string(),
@@ -104,9 +105,9 @@ impl<'a> FuseQuotaLimiter<'a> {
             .arg("--communication-socket-path")
             .arg(&socket_path)
             .arg("--uid")
-            .arg(self.filesystem.config.system.user.uid.to_string())
+            .arg(self.filesystem.config.load().system.user.uid.to_string())
             .arg("--gid")
-            .arg(self.filesystem.config.system.user.gid.to_string())
+            .arg(self.filesystem.config.load().system.user.gid.to_string())
             .arg("--nocache")
             .arg("-o")
             .arg("io_uring,allow_other")

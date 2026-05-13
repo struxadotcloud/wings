@@ -41,7 +41,7 @@ pub async fn auth(state: GetState, req: Request, next: Next) -> Result<Response<
             .into_response());
     }
 
-    if !constant_time_eq::constant_time_eq(token.as_bytes(), state.config.token.as_bytes()) {
+    if !constant_time_eq::constant_time_eq(token.as_bytes(), state.config.load().token.as_bytes()) {
         return Ok(ApiResponse::error("invalid authorization token")
             .with_status(StatusCode::UNAUTHORIZED)
             .with_header("WWW-Authenticate", "Bearer")

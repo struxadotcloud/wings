@@ -341,7 +341,7 @@ impl Server {
                                 server
                                     .stopping
                                     .store(false, Ordering::SeqCst);
-                                if server.app_state.config.docker.delete_container_on_stop {
+                                if server.app_state.config.load().docker.delete_container_on_stop {
                                     tokio::spawn({
                                         let server = server.clone();
                                         async move {
@@ -357,7 +357,7 @@ impl Server {
 
                                     server.destroy_container().await;
                                 }
-                            } else if server.app_state.config.system.crash_detection.enabled
+                            } else if server.app_state.config.load().system.crash_detection.enabled
                                 && !server
                                     .crash_handled
                                     .load(Ordering::SeqCst)
@@ -370,6 +370,7 @@ impl Server {
                                     && !oom_killed
                                     && !server.app_state
                                         .config
+                                        .load()
                                         .system
                                         .crash_detection
                                         .detect_clean_exit_as_crash
@@ -378,7 +379,7 @@ impl Server {
                                         server = %server.uuid,
                                         "container exited cleanly, not restarting due to crash detection settings"
                                     );
-                                    if server.app_state.config.docker.delete_container_on_stop {
+                                    if server.app_state.config.load().docker.delete_container_on_stop {
                                         tokio::spawn({
                                             let server = server.clone();
                                             async move {
@@ -422,21 +423,21 @@ impl Server {
                                 let mut last_crash_lock = server.last_crash.lock().await;
                                 if let Some(last_crash) = *last_crash_lock {
                                     if last_crash.elapsed().as_secs()
-                                        < server.app_state.config.system.crash_detection.timeout
+                                        < server.app_state.config.load().system.crash_detection.timeout
                                     {
                                         tracing::debug!(
                                             server = %server.uuid,
                                             "last crash was less than {} seconds ago, aborting automatic restart",
-                                            server.app_state.config.system.crash_detection.timeout
+                                            server.app_state.config.load().system.crash_detection.timeout
                                         );
 
                                         server.log_daemon_with_prelude(
                                             &format!(
                                                 "Aborting automatic restart, last crash occurred less than {} seconds ago.",
-                                                server.app_state.config.system.crash_detection.timeout
+                                                server.app_state.config.load().system.crash_detection.timeout
                                             ),
                                         );
-                                        if server.app_state.config.docker.delete_container_on_stop {
+                                        if server.app_state.config.load().docker.delete_container_on_stop {
                                             tokio::spawn({
                                                 let server = server.clone();
                                                 async move {
@@ -458,7 +459,7 @@ impl Server {
                                         tracing::debug!(
                                             server = %server.uuid,
                                             "last crash was more than {} seconds ago, restarting server",
-                                            server.app_state.config.system.crash_detection.timeout
+                                            server.app_state.config.load().system.crash_detection.timeout
                                         );
 
                                         last_crash_lock.replace(std::time::Instant::now());
@@ -632,7 +633,7 @@ impl Server {
 
     #[inline]
     pub fn is_system_locked_state(&self) -> bool {
-        if !self.app_state.config.debug {
+        if !self.app_state.config.load().debug {
             return self.installing.load(Ordering::Relaxed)
                 || self.restoring.load(Ordering::Relaxed)
                 || self.transferring.load(Ordering::Relaxed);
@@ -914,7 +915,7 @@ impl Server {
                                 .unwrap_or_default()
                                 .as_secs();
                             let last_check = server.filesystem.last_disk_check.load(std::sync::atomic::Ordering::Relaxed);
-                            if now.saturating_sub(last_check) > server.app_state.config.system.disk_check_interval {
+                            if now.saturating_sub(last_check) > server.app_state.config.load().system.disk_check_interval {
                                 tracing::info!(
                                     server = %server.uuid,
                                     "disk usage check is stale (last check was {} seconds ago), doing foreground check before starting server",
@@ -927,7 +928,7 @@ impl Server {
                                 server.filesystem.rerun_disk_checker().await;
                                 let _ = tokio::time::timeout(
                                     std::time::Duration::from_secs(
-                                        server.app_state.config.system.disk_check_interval.min(30),
+                                        server.app_state.config.load().system.disk_check_interval.min(30),
                                     ),
                                     server.filesystem.disk_check_completed.notified(),
                                 )
@@ -954,7 +955,7 @@ impl Server {
                             );
                         }
 
-                        if server.app_state.config.system.check_permissions_on_boot {
+                        if server.app_state.config.load().system.check_permissions_on_boot {
                             tracing::debug!(
                                 server = %server.uuid,
                                 "checking permissions on boot"

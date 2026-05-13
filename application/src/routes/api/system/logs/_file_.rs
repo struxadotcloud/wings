@@ -42,7 +42,7 @@ mod get {
         }
 
         let mut file = match tokio::fs::File::open(
-            std::path::Path::new(&state.config.system.log_directory).join(&file_path),
+            std::path::Path::new(&state.config.load().system.log_directory).join(&file_path),
         )
         .await
         {
@@ -54,7 +54,7 @@ mod get {
             let gz_reader = AsyncCompressionReader::new_mt(
                 file.into_std().await,
                 crate::io::compression::CompressionType::Gz,
-                state.config.api.file_decompression_threads,
+                state.config.load().api.file_decompression_threads,
             );
 
             if let Some(lines) = params.lines {

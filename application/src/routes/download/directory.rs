@@ -140,7 +140,7 @@ mod get {
             .async_read_dir_archive(
                 &path,
                 data.archive_format,
-                state.config.system.backups.compression_level,
+                state.config.load().system.backups.compression_level,
                 None,
                 ignore,
             )

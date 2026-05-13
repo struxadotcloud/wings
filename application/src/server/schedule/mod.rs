@@ -402,10 +402,16 @@ impl Schedule {
                                 let timezone = timezone_lock
                                     .container
                                     .timezone
-                                    .as_ref()
-                                    .unwrap_or(&server.app_state.config.system.timezone);
-                                let timezone =
-                                    chrono_tz::Tz::from_str(timezone).unwrap_or(chrono_tz::UTC);
+                                    .as_deref()
+                                    .map_or_else(
+                                        || {
+                                            chrono_tz::Tz::from_str(
+                                                &server.app_state.config.load().system.timezone,
+                                            )
+                                        },
+                                        chrono_tz::Tz::from_str,
+                                    )
+                                    .unwrap_or(chrono_tz::UTC);
                                 drop(timezone_lock);
 
                                 let now_datetime = chrono::Utc::now().with_timezone(&timezone);

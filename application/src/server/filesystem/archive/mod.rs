@@ -408,7 +408,12 @@ impl Archive {
                     let reader = CompressionReaderMt::new(
                         reader,
                         self.compression,
-                        self.server.app_state.config.api.file_decompression_threads,
+                        self.server
+                            .app_state
+                            .config
+                            .load()
+                            .api
+                            .file_decompression_threads,
                     )?;
                     let mut reader = AbortReader::new(reader, listener);
 
@@ -442,7 +447,12 @@ impl Archive {
                     let reader = CompressionReaderMt::new(
                         reader,
                         self.compression,
-                        self.server.app_state.config.api.file_decompression_threads,
+                        self.server
+                            .app_state
+                            .config
+                            .load()
+                            .api
+                            .file_decompression_threads,
                     )?;
                     let reader = AbortReader::new(reader, listener);
 
@@ -574,7 +584,14 @@ impl Archive {
                     }
 
                     let pool = rayon::ThreadPoolBuilder::new()
-                        .num_threads(self.server.app_state.config.api.file_decompression_threads)
+                        .num_threads(
+                            self.server
+                                .app_state
+                                .config
+                                .load()
+                                .api
+                                .file_decompression_threads,
+                        )
                         .build()?;
 
                     let error = Arc::new(RwLock::new(None));
@@ -895,7 +912,14 @@ impl Archive {
                     }
 
                     let pool = rayon::ThreadPoolBuilder::new()
-                        .num_threads(self.server.app_state.config.api.file_decompression_threads)
+                        .num_threads(
+                            self.server
+                                .app_state
+                                .config
+                                .load()
+                                .api
+                                .file_decompression_threads,
+                        )
                         .build()?;
 
                     let error = Arc::new(RwLock::new(None));
@@ -1058,7 +1082,14 @@ impl Archive {
                     }
 
                     let pool = rayon::ThreadPoolBuilder::new()
-                        .num_threads(self.server.app_state.config.api.file_decompression_threads)
+                        .num_threads(
+                            self.server
+                                .app_state
+                                .config
+                                .load()
+                                .api
+                                .file_decompression_threads,
+                        )
                         .build()?;
 
                     fn recursive_traverse(

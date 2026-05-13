@@ -71,7 +71,7 @@ mod get {
         let entries = filesystem
             .async_read_dir(
                 &root,
-                Some(state.config.api.directory_entry_limit),
+                Some(state.config.load().api.directory_entry_limit),
                 1,
                 is_ignored,
                 crate::models::DirectorySortingMode::NameAsc,

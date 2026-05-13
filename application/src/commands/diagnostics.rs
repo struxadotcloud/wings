@@ -35,6 +35,7 @@ impl crate::commands::CliCommand<DiagnosticsArgs> for DiagnosticsCommand {
                         return Ok(1);
                     }
                 };
+                let config = config.load();
 
                 let include_endpoints = Confirm::with_theme(&ColorfulTheme::default())
                     .with_prompt(

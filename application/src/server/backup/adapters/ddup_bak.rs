@@ -41,7 +41,7 @@ pub async fn get_repository(
         return Ok(Arc::clone(repository));
     }
 
-    let path = PathBuf::from(&config.system.backup_directory);
+    let path = PathBuf::from(&config.load().system.backup_directory);
     if tokio::fs::metadata(path.join(".ddup-bak")).await.is_ok() {
         let repository = Arc::new(
             tokio::task::spawn_blocking(move || {
@@ -343,6 +343,7 @@ impl BackupCreateExt for DdupBakBackup {
                         let compression_format = server
                             .app_state
                             .config
+                            .load()
                             .system
                             .backups
                             .ddup_bak
@@ -370,6 +371,7 @@ impl BackupCreateExt for DdupBakBackup {
                     server
                         .app_state
                         .config
+                        .load()
                         .system
                         .backups
                         .ddup_bak
@@ -459,7 +461,7 @@ impl BackupExt for DdupBakBackup {
         let repository = get_repository(&state.config).await?;
 
         let archive = self.archive.clone();
-        let compression_level = state.config.system.backups.compression_level;
+        let compression_level = state.config.load().system.backups.compression_level;
         let (reader, writer) = tokio::io::simplex(crate::BUFFER_SIZE);
 
         match archive_format {
@@ -490,7 +492,7 @@ impl BackupExt for DdupBakBackup {
                     tokio_util::io::SyncIoBridge::new(writer),
                     f.compression_format(),
                     compression_level,
-                    state.config.api.file_compression_threads,
+                    state.config.load().api.file_compression_threads,
                 )?;
 
                 crate::spawn_blocking_handled(move || -> Result<(), anyhow::Error> {
@@ -519,7 +521,7 @@ impl BackupExt for DdupBakBackup {
                     tokio_util::io::SyncIoBridge::new(writer),
                     f.compression_format(),
                     compression_level,
-                    state.config.api.file_compression_threads,
+                    state.config.load().api.file_compression_threads,
                 )?;
 
                 crate::spawn_blocking_handled(move || -> Result<(), anyhow::Error> {

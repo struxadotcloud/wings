@@ -139,7 +139,7 @@ impl ServerConfiguration {
         let mut mounts = Vec::new();
 
         #[cfg(unix)]
-        if config.system.machine_id.enabled {
+        if config.load().system.machine_id.enabled {
             mounts.push(Mount {
                 default: false,
                 target: "/etc/machine-id".into(),
@@ -149,7 +149,7 @@ impl ServerConfiguration {
                     .to_compact_string(),
                 read_only: true,
             });
-            if !config.system.user.rootless.enabled
+            if !config.load().system.user.rootless.enabled
                 && tokio::fs::metadata("/sys/class/dmi/id/product_uuid")
                     .await
                     .is_ok()
@@ -198,11 +198,11 @@ impl ServerConfiguration {
         }
 
         #[cfg(unix)]
-        if config.system.passwd.enabled {
+        if config.load().system.passwd.enabled {
             mounts.push(Mount {
                 default: false,
                 target: "/etc/group".into(),
-                source: PathBuf::from(&config.system.passwd.directory)
+                source: PathBuf::from(&config.load().system.passwd.directory)
                     .join("group")
                     .to_string_lossy()
                     .to_compact_string(),
@@ -211,7 +211,7 @@ impl ServerConfiguration {
             mounts.push(Mount {
                 default: false,
                 target: "/etc/passwd".into(),
-                source: PathBuf::from(&config.system.passwd.directory)
+                source: PathBuf::from(&config.load().system.passwd.directory)
                     .join("passwd")
                     .to_string_lossy()
                     .to_compact_string(),
@@ -221,6 +221,7 @@ impl ServerConfiguration {
 
         for mount in &self.mounts {
             if config
+                .load()
                 .allowed_mounts
                 .iter()
                 .all(|m| !mount.source.starts_with(&**m))
@@ -278,7 +279,14 @@ impl ServerConfiguration {
         let mut resources = bollard::models::Resources {
             memory: match real_memory {
                 0 => None,
-                limit => Some(config.docker.overhead.get_memory(limit.into()).as_bytes() as i64),
+                limit => Some(
+                    config
+                        .load()
+                        .docker
+                        .overhead
+                        .get_memory(limit.into())
+                        .as_bytes() as i64,
+                ),
             },
             memory_reservation: match real_memory {
                 0 => None,
@@ -291,6 +299,7 @@ impl ServerConfiguration {
                     0 => Some(limit * 1024 * 1024),
                     memory_limit => Some(
                         config
+                            .load()
                             .docker
                             .overhead
                             .get_memory(memory_limit.into())
@@ -301,7 +310,7 @@ impl ServerConfiguration {
             },
             blkio_weight: self.build.io_weight,
             oom_kill_disable: Some(self.build.oom_disabled),
-            pids_limit: match config.docker.container_pid_limit {
+            pids_limit: match config.load().docker.container_pid_limit {
                 0 => None,
                 limit => Some(limit as i64),
             },
@@ -324,12 +333,10 @@ impl ServerConfiguration {
 
         environment.insert(
             "TZ".into(),
-            serde_json::Value::String(
-                self.container
-                    .timezone
-                    .as_ref()
-                    .map_or_else(|| config.system.timezone.to_string(), |tz| tz.to_string()),
-            ),
+            serde_json::Value::String(self.container.timezone.as_ref().map_or_else(
+                || config.load().system.timezone.to_string(),
+                |tz| tz.to_string(),
+            )),
         );
         environment.insert(
             "STARTUP".into(),

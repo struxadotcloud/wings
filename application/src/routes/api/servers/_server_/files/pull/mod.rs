@@ -112,13 +112,15 @@ mod post {
             }
         }
 
-        if state.config.api.disable_remote_download {
+        if state.config.load().api.disable_remote_download {
             return ApiResponse::error("remote pulling is disabled")
                 .with_status(StatusCode::EXPECTATION_FAILED)
                 .ok();
         }
 
-        if server.filesystem.pulls().await.len() >= state.config.api.server_remote_download_limit {
+        if server.filesystem.pulls().await.len()
+            >= state.config.load().api.server_remote_download_limit
+        {
             return ApiResponse::error("too many concurrent pulls")
                 .with_status(StatusCode::EXPECTATION_FAILED)
                 .ok();

@@ -142,7 +142,7 @@ mod get {
                 &path,
                 payload.file_paths.into_iter().map(PathBuf::from).collect(),
                 data.archive_format,
-                state.config.system.backups.compression_level,
+                state.config.load().system.backups.compression_level,
                 None,
                 ignore,
             )

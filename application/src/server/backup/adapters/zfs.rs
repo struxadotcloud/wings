@@ -26,7 +26,7 @@ pub struct ZfsBackup {
 impl ZfsBackup {
     #[inline]
     fn get_backup_path(config: &crate::config::Config, uuid: uuid::Uuid) -> PathBuf {
-        Path::new(&config.system.backup_directory)
+        Path::new(&config.load().system.backup_directory)
             .join("zfs")
             .join(uuid.to_string())
     }
@@ -42,7 +42,7 @@ impl ZfsBackup {
         server_uuid: uuid::Uuid,
         uuid: uuid::Uuid,
     ) -> PathBuf {
-        Path::new(&config.system.data_directory)
+        Path::new(&config.load().system.data_directory)
             .join(server_uuid.to_string())
             .join(".zfs")
             .join("snapshot")
@@ -297,7 +297,7 @@ impl BackupExt for ZfsBackup {
                             None,
                             ignore.into(),
                             crate::server::filesystem::archive::create::CreateZipOptions {
-                                compression_level: config.system.backups.compression_level,
+                                compression_level: config.load().system.backups.compression_level,
                             },
                         )
                         .await
@@ -323,8 +323,8 @@ impl BackupExt for ZfsBackup {
                             ignore.into(),
                             crate::server::filesystem::archive::create::CreateTarOptions {
                                 compression_type: f.compression_format(),
-                                compression_level: config.system.backups.compression_level,
-                                threads: config.api.file_compression_threads,
+                                compression_level: config.load().system.backups.compression_level,
+                                threads: config.load().api.file_compression_threads,
                             },
                         )
                         .await
@@ -350,8 +350,8 @@ impl BackupExt for ZfsBackup {
                             ignore.into(),
                             crate::server::filesystem::archive::create::CreateItafOptions {
                                 compression_type: f.compression_format(),
-                                compression_level: config.system.backups.compression_level,
-                                threads: config.api.file_compression_threads,
+                                compression_level: config.load().system.backups.compression_level,
+                                threads: config.load().api.file_compression_threads,
                                 crc_enabled: true,
                             },
                         )
@@ -439,7 +439,7 @@ impl BackupExt for ZfsBackup {
                 .await?
                 .with_is_ignored(ignore.into())
                 .run_multithreaded(
-                    server.app_state.config.system.backups.zfs.restore_threads,
+                    server.app_state.config.load().system.backups.zfs.restore_threads,
                     Arc::new({
                         let server = server.clone();
                         let filesystem = filesystem.clone();

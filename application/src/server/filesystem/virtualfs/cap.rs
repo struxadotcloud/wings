@@ -407,7 +407,13 @@ impl super::VirtualReadableFilesystem for VirtualCapFilesystem {
         is_ignored: IsIgnoredFn,
     ) -> Result<tokio::io::ReadHalf<tokio::io::SimplexStream>, anyhow::Error> {
         let names = self.inner.async_read_dir_all(path).await?;
-        let file_compression_threads = self.server.app_state.config.api.file_compression_threads;
+        let file_compression_threads = self
+            .server
+            .app_state
+            .config
+            .load()
+            .api
+            .file_compression_threads;
         let (reader, writer) = tokio::io::simplex(crate::BUFFER_SIZE);
 
         tokio::spawn({
@@ -710,7 +716,16 @@ impl super::VirtualWritableFilesystem for VirtualCapFilesystem {
     }
 
     fn chown(&self, path: &(dyn AsRef<Path> + Send + Sync)) -> Result<(), anyhow::Error> {
-        if self.server.app_state.config.system.user.rootless.enabled {
+        if self
+            .server
+            .app_state
+            .config
+            .load()
+            .system
+            .user
+            .rootless
+            .enabled
+        {
             return Ok(());
         }
 
@@ -724,7 +739,16 @@ impl super::VirtualWritableFilesystem for VirtualCapFilesystem {
         &self,
         path: &(dyn AsRef<Path> + Send + Sync),
     ) -> Result<(), anyhow::Error> {
-        if self.server.app_state.config.system.user.rootless.enabled {
+        if self
+            .server
+            .app_state
+            .config
+            .load()
+            .system
+            .user
+            .rootless
+            .enabled
+        {
             return Ok(());
         }
 

@@ -73,7 +73,7 @@ mod get {
     ) -> ApiResponseResult {
         let per_page = match data.per_page {
             Some(per_page) => Some(per_page),
-            None => match state.config.api.directory_entry_limit {
+            None => match state.config.load().api.directory_entry_limit {
                 0 => None,
                 limit => Some(limit),
             },

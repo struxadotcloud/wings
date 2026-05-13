@@ -62,7 +62,7 @@ impl PullQueryResponse {
         if let Some(host) = url.host_str()
             && let Ok(ip) = std::net::IpAddr::from_str(host)
         {
-            for cidr in config.api.remote_download_blocked_cidrs.iter() {
+            for cidr in config.load().api.remote_download_blocked_cidrs.iter() {
                 if cidr.contains(&ip) {
                     tracing::warn!("blocking internal IP address in pull: {}", ip);
                     return Err(anyhow::anyhow!("IP address {} is blocked", ip));
@@ -142,6 +142,7 @@ impl Download {
             for cidr in server
                 .app_state
                 .config
+                .load()
                 .api
                 .remote_download_blocked_cidrs
                 .iter()

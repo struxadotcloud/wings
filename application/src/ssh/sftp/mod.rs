@@ -311,7 +311,7 @@ impl russh_sftp::server::Handler for SftpSession {
             _ => return Err(StatusCode::NoSuchFile),
         };
 
-        if handle.consumed >= self.state.config.system.sftp.directory_entry_limit {
+        if handle.consumed >= self.state.config.load().system.sftp.directory_entry_limit {
             return Err(StatusCode::Eof);
         }
 
@@ -349,8 +349,15 @@ impl russh_sftp::server::Handler for SftpSession {
             files.push(Self::convert_entry(&path, metadata, target_metadata));
             handle.consumed += 1;
 
-            if handle.consumed >= self.state.config.system.sftp.directory_entry_limit
-                || files.len() >= self.state.config.system.sftp.directory_entry_send_amount
+            if handle.consumed >= self.state.config.load().system.sftp.directory_entry_limit
+                || files.len()
+                    >= self
+                        .state
+                        .config
+                        .load()
+                        .system
+                        .sftp
+                        .directory_entry_send_amount
             {
                 tracing::debug!(
                     "{} entries sent early in sftp readdir ({} total)",
@@ -370,7 +377,7 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::PermissionDenied);
         }
 
-        if self.state.config.system.sftp.read_only {
+        if self.state.config.load().system.sftp.read_only {
             return Err(StatusCode::PermissionDenied);
         }
 
@@ -424,7 +431,7 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::PermissionDenied);
         }
 
-        if self.state.config.system.sftp.read_only {
+        if self.state.config.load().system.sftp.read_only {
             return Err(StatusCode::PermissionDenied);
         }
 
@@ -485,7 +492,7 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::PermissionDenied);
         }
 
-        if self.state.config.system.sftp.read_only {
+        if self.state.config.load().system.sftp.read_only {
             return Err(StatusCode::PermissionDenied);
         }
 
@@ -569,7 +576,7 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::PermissionDenied);
         }
 
-        if self.state.config.system.sftp.read_only {
+        if self.state.config.load().system.sftp.read_only {
             return Err(StatusCode::PermissionDenied);
         }
 
@@ -651,7 +658,7 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::PermissionDenied);
         }
 
-        if self.state.config.system.sftp.read_only {
+        if self.state.config.load().system.sftp.read_only {
             return Err(StatusCode::PermissionDenied);
         }
 
@@ -846,7 +853,7 @@ impl russh_sftp::server::Handler for SftpSession {
             return Err(StatusCode::PermissionDenied);
         }
 
-        if self.state.config.system.sftp.read_only {
+        if self.state.config.load().system.sftp.read_only {
             return Err(StatusCode::PermissionDenied);
         }
 
@@ -976,7 +983,7 @@ impl russh_sftp::server::Handler for SftpSession {
         } else if pflags.contains(OpenFlags::WRITE) || pflags.contains(OpenFlags::APPEND) {
             activity_event = Some(ActivityEvent::SftpWrite);
         } else if pflags.contains(OpenFlags::READ)
-            && self.state.config.system.sftp.activity.log_file_reads
+            && self.state.config.load().system.sftp.activity.log_file_reads
         {
             activity_event = Some(ActivityEvent::SftpRead);
         }
@@ -1104,7 +1111,7 @@ impl russh_sftp::server::Handler for SftpSession {
             _ => return Err(StatusCode::NoSuchFile),
         };
 
-        if self.state.config.system.sftp.read_only {
+        if self.state.config.load().system.sftp.read_only {
             return Err(StatusCode::PermissionDenied);
         }
 

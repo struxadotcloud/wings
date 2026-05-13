@@ -207,7 +207,13 @@ mod post {
                                 let reader = AbortReader::new(reader, listener.clone());
                                 let reader = LimitedReader::new_with_bytes_per_second(
                                     reader,
-                                    state.config.system.transfers.download_limit.as_bytes(),
+                                    state
+                                        .config
+                                        .load()
+                                        .system
+                                        .transfers
+                                        .download_limit
+                                        .as_bytes(),
                                 );
                                 let reader =
                                     HashReader::new_with_hasher(reader, sha2::Sha256::new());
@@ -560,7 +566,7 @@ mod post {
                                 match field.content_type() {
                                     Some("backup/wings") => {
                                         let file_name =
-                                            Path::new(&state.config.system.backup_directory)
+                                            Path::new(&state.config.load().system.backup_directory)
                                                 .join(file_name);
                                         let reader = tokio_util::io::StreamReader::new(
                                             field.into_stream().map_err(|err| {
@@ -573,7 +579,13 @@ mod post {
                                         let reader = AbortReader::new(reader, listener.clone());
                                         let reader = LimitedReader::new_with_bytes_per_second(
                                             reader,
-                                            state.config.system.transfers.download_limit.as_bytes(),
+                                            state
+                                                .config
+                                                .load()
+                                                .system
+                                                .transfers
+                                                .download_limit
+                                                .as_bytes(),
                                         );
                                         let mut reader = HashReader::new_with_hasher(
                                             reader,

@@ -28,7 +28,8 @@ impl ServerManager {
         app_state: &crate::routes::State,
         raw_servers: Vec<crate::remote::servers::RawServer>,
     ) {
-        let states_path = Path::new(&app_state.config.system.root_directory).join("states.json");
+        let states_path =
+            Path::new(&app_state.config.load().system.root_directory).join("states.json");
         let mut states: HashMap<uuid::Uuid, ServerState> = serde_json::from_str(
             tokio::fs::read_to_string(&states_path)
                 .await
@@ -38,7 +39,7 @@ impl ServerManager {
         .unwrap_or_default();
 
         let installing_path =
-            Path::new(&app_state.config.system.root_directory).join("installing.json");
+            Path::new(&app_state.config.load().system.root_directory).join("installing.json");
         let mut installing: HashMap<uuid::Uuid, (bool, super::installation::InstallationScript)> =
             serde_json::from_str(
                 tokio::fs::read_to_string(&installing_path)
@@ -50,7 +51,7 @@ impl ServerManager {
 
         let mut servers = self.servers.write().await;
         let semaphore = Arc::new(Semaphore::new(
-            app_state.config.remote_query.boot_servers_per_page as usize,
+            app_state.config.load().remote_query.boot_servers_per_page as usize,
         ));
 
         for server in raw_servers {
@@ -117,7 +118,8 @@ impl ServerManager {
             };
 
             if let Some((reinstall, container_script)) = installing.remove(&server.uuid) {
-                let boot_servers_per_page = app_state.config.remote_query.boot_servers_per_page;
+                let boot_servers_per_page =
+                    app_state.config.load().remote_query.boot_servers_per_page;
 
                 tokio::spawn({
                     let server = server.clone();
@@ -153,7 +155,7 @@ impl ServerManager {
                         server.installer.write().await.replace(installer);
                     }
                 });
-            } else if app_state.config.remote_query.boot_servers_per_page > 0 {
+            } else if app_state.config.load().remote_query.boot_servers_per_page > 0 {
                 spawn_start_task();
             } else {
                 match server.attach_container().await {

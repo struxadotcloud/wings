@@ -22,17 +22,25 @@ impl Server {
             ratelimiter: Arc::new(ratelimiter::SshRatelimiter::new(
                 state
                     .config
+                    .load()
                     .system
                     .sftp
                     .limits
                     .authentication_password_attempts,
                 state
                     .config
+                    .load()
                     .system
                     .sftp
                     .limits
                     .authentication_pubkey_attempts,
-                state.config.system.sftp.limits.authentication_cooldown,
+                state
+                    .config
+                    .load()
+                    .system
+                    .sftp
+                    .limits
+                    .authentication_cooldown,
             )),
             state,
         }

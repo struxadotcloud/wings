@@ -25,7 +25,7 @@ pub struct BtrfsBackup {
 impl BtrfsBackup {
     #[inline]
     pub fn get_backup_path(config: &crate::config::Config, uuid: uuid::Uuid) -> PathBuf {
-        Path::new(&config.system.backup_directory)
+        Path::new(&config.load().system.backup_directory)
             .join("btrfs")
             .join(uuid.to_string())
     }
@@ -127,6 +127,7 @@ impl BackupCreateExt for BtrfsBackup {
                     if server
                         .app_state
                         .config
+                        .load()
                         .system
                         .backups
                         .btrfs
@@ -258,7 +259,7 @@ impl BackupExt for BtrfsBackup {
                             None,
                             ignore.into(),
                             crate::server::filesystem::archive::create::CreateZipOptions {
-                                compression_level: config.system.backups.compression_level,
+                                compression_level: config.load().system.backups.compression_level,
                             },
                         )
                         .await
@@ -284,8 +285,8 @@ impl BackupExt for BtrfsBackup {
                             ignore.into(),
                             crate::server::filesystem::archive::create::CreateTarOptions {
                                 compression_type: f.compression_format(),
-                                compression_level: config.system.backups.compression_level,
-                                threads: config.api.file_compression_threads,
+                                compression_level: config.load().system.backups.compression_level,
+                                threads: config.load().api.file_compression_threads,
                             },
                         )
                         .await
@@ -311,8 +312,8 @@ impl BackupExt for BtrfsBackup {
                             ignore.into(),
                             crate::server::filesystem::archive::create::CreateItafOptions {
                                 compression_type: f.compression_format(),
-                                compression_level: config.system.backups.compression_level,
-                                threads: config.api.file_compression_threads,
+                                compression_level: config.load().system.backups.compression_level,
+                                threads: config.load().api.file_compression_threads,
                                 crc_enabled: true,
                             },
                         )
@@ -399,7 +400,7 @@ impl BackupExt for BtrfsBackup {
                 .await?
                 .with_is_ignored(ignore.into())
                 .run_multithreaded(
-                    server.app_state.config.system.backups.btrfs.restore_threads,
+                    server.app_state.config.load().system.backups.btrfs.restore_threads,
                     Arc::new({
                         let server = server.clone();
                         let filesystem = filesystem.clone();

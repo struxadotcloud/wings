@@ -348,7 +348,7 @@ impl OutgoingServerTransfer {
                         crate::server::filesystem::archive::create::CreateTarOptions {
                             compression_type: archive_format.compression_format(),
                             compression_level,
-                            threads: server.app_state.config.api.file_compression_threads,
+                            threads: server.app_state.config.load().api.file_compression_threads,
                         },
                     )
                 } else {
@@ -360,7 +360,7 @@ impl OutgoingServerTransfer {
                         crate::server::filesystem::archive::create::CreateItafOptions {
                             compression_type: archive_format.compression_format(),
                             compression_level,
-                            threads: server.app_state.config.api.file_compression_threads,
+                            threads: server.app_state.config.load().api.file_compression_threads,
                             crc_enabled: false,
                         },
                     )

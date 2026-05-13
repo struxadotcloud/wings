@@ -217,7 +217,7 @@ mod post {
 
                 walker
                     .run_multithreaded(
-                        state.config.api.file_search_threads,
+                        state.config.load().api.file_search_threads,
                         DirectoryWalkFn::from({
                             let filesystem = filesystem.clone();
                             let results_count = Arc::clone(&results_count);
@@ -341,7 +341,7 @@ mod post {
 
                 walker
                     .run_multithreaded(
-                        state.config.api.file_search_threads,
+                        state.config.load().api.file_search_threads,
                         DirectoryWalkFn::from({
                             let filesystem = filesystem.clone();
                             let results_count = Arc::clone(&results_count);

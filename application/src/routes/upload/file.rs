@@ -184,18 +184,20 @@ mod post {
 
                 if let Some(mut field) = multipart.next_field().await? {
                     while let Some(chunk) = field.chunk().await? {
+                        let config = state.config.load();
                         if crate::unlikely(
-                            state.config.api.upload_limit.as_bytes() != 0
+                            config.api.upload_limit.as_bytes() != 0
                                 && written_size + chunk.len() as u64
-                                    > state.config.api.upload_limit.as_bytes(),
+                                    > config.api.upload_limit.as_bytes(),
                         ) {
                             return ApiResponse::error(&format!(
                                 "file size is larger than {}MiB",
-                                state.config.api.upload_limit.as_mib()
+                                config.api.upload_limit.as_mib()
                             ))
                             .with_status(StatusCode::EXPECTATION_FAILED)
                             .ok();
                         }
+                        drop(config);
 
                         file.write_all(&chunk).await?;
                         written_size += chunk.len() as u64;
@@ -365,18 +367,20 @@ mod post {
                         .await;
 
                     while let Some(chunk) = field.chunk().await? {
+                        let config = state.config.load();
                         if crate::unlikely(
-                            state.config.api.upload_limit.as_bytes() != 0
+                            config.api.upload_limit.as_bytes() != 0
                                 && written_size + chunk.len() as u64
-                                    > state.config.api.upload_limit.as_bytes(),
+                                    > config.api.upload_limit.as_bytes(),
                         ) {
                             return ApiResponse::error(&format!(
                                 "file size is larger than {}MiB",
-                                state.config.api.upload_limit.as_mib()
+                                config.api.upload_limit.as_mib()
                             ))
                             .with_status(StatusCode::EXPECTATION_FAILED)
                             .ok();
                         }
+                        drop(config);
 
                         writer.write_all(&chunk).await?;
                         written_size += chunk.len() as u64;

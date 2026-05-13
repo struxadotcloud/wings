@@ -1154,7 +1154,12 @@ impl VirtualReadableFilesystem for VirtualSevenZipArchive {
                     tokio_util::io::SyncIoBridge::new(writer),
                     f.compression_format(),
                     compression_level,
-                    self.server.app_state.config.api.file_compression_threads,
+                    self.server
+                        .app_state
+                        .config
+                        .load()
+                        .api
+                        .file_compression_threads,
                 )?;
 
                 crate::spawn_blocking_handled(move || -> Result<(), anyhow::Error> {
@@ -1248,7 +1253,12 @@ impl VirtualReadableFilesystem for VirtualSevenZipArchive {
                     tokio_util::io::SyncIoBridge::new(writer),
                     f.compression_format(),
                     compression_level,
-                    self.server.app_state.config.api.file_compression_threads,
+                    self.server
+                        .app_state
+                        .config
+                        .load()
+                        .api
+                        .file_compression_threads,
                 )?;
 
                 crate::spawn_blocking_handled(move || -> Result<(), anyhow::Error> {

@@ -260,7 +260,8 @@ pub async fn run(ctx: DiskCheckerContext) {
                 "skipping disk usage check due to server state inactivity"
             );
         } else {
-            let paths_to_scan = if full_disk_check_counter % config.system.full_disk_check_every
+            let paths_to_scan = if full_disk_check_counter
+                % config.load().system.full_disk_check_every
                 == 0
             {
                 None
@@ -308,7 +309,7 @@ pub async fn run(ctx: DiskCheckerContext) {
 
         tokio::select! {
             _ = tokio::time::sleep(std::time::Duration::from_secs(
-                config.system.disk_check_interval,
+                config.load().system.disk_check_interval,
             )) => {},
             _ = disk_checker_rescan.notified() => {
                 force_scan = true;

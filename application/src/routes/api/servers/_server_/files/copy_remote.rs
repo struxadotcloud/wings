@@ -172,7 +172,7 @@ mod post {
 
                                 walker
                                     .run_multithreaded(
-                                        state.config.api.file_copy_threads,
+                                        state.config.load().api.file_copy_threads,
                                         DirectoryStreamWalkFn::from({
                                             let server = server.clone();
                                             let filesystem = filesystem.clone();
@@ -378,9 +378,9 @@ mod post {
                                         &root,
                                         files.into_iter().map(PathBuf::from).collect(),
                                         data.archive_format.into(),
-                                        data.compression_level.unwrap_or(
-                                            state.config.system.backups.compression_level,
-                                        ),
+                                        data.compression_level.unwrap_or_else(|| {
+                                            state.config.load().system.backups.compression_level
+                                        }),
                                         Some(progress),
                                         is_ignored,
                                     )

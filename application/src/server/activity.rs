@@ -110,7 +110,7 @@ impl ActivityManager {
                 async move {
                     loop {
                         tokio::time::sleep(tokio::time::Duration::from_secs(
-                            config.system.activity_send_interval,
+                            config.load().system.activity_send_interval,
                         ))
                         .await;
 
@@ -247,7 +247,7 @@ impl ActivityManager {
 
                         let activities_len = activities.len();
                         let activities_to_send = activities
-                            .drain(..config.system.activity_send_count.min(activities_len))
+                            .drain(..config.load().system.activity_send_count.min(activities_len))
                             .collect::<Vec<_>>();
 
                         if activities_to_send.is_empty() {

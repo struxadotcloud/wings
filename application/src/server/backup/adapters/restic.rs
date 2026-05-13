@@ -215,7 +215,7 @@ pub struct ResticBackup {
 fn get_restic_cache_dir(config: &crate::config::Config) -> String {
     format!(
         "{}/.cache/restic",
-        config.system.backup_directory.trim_end_matches('/')
+        config.load().system.backup_directory.trim_end_matches('/')
     )
 }
 
@@ -226,18 +226,19 @@ impl BackupFindExt for ResticBackup {
             return Ok(true);
         }
 
-        if tokio::fs::metadata(&state.config.system.backups.restic.password_file)
+        if tokio::fs::metadata(&state.config.load().system.backups.restic.password_file)
             .await
             .is_ok()
         {
+            let config = state.config.load();
             let output = match Command::new("restic")
-                .envs(&state.config.system.backups.restic.environment)
+                .envs(&config.system.backups.restic.environment)
                 .arg("--json")
                 .arg("--no-lock")
                 .arg("--repo")
-                .arg(&state.config.system.backups.restic.repository)
+                .arg(&config.system.backups.restic.repository)
                 .arg("--password-file")
-                .arg(&state.config.system.backups.restic.password_file)
+                .arg(&config.system.backups.restic.password_file)
                 .arg("--cache-dir")
                 .arg(get_restic_cache_dir(&state.config))
                 .arg("snapshots")
@@ -256,12 +257,16 @@ impl BackupFindExt for ResticBackup {
             if output.status.success() {
                 let snapshots: Vec<ResticSnapshot> =
                     serde_json::from_slice(&output.stdout).unwrap_or_default();
-                let configuration = Arc::new(ResticBackupConfiguration {
-                    repository: state.config.system.backups.restic.repository.clone(),
-                    password_file: Some(state.config.system.backups.restic.password_file.clone()),
-                    retry_lock_seconds: state.config.system.backups.restic.retry_lock_seconds,
-                    environment: state.config.system.backups.restic.environment.clone(),
-                });
+                let configuration = {
+                    let config = state.config.load();
+
+                    Arc::new(ResticBackupConfiguration {
+                        repository: config.system.backups.restic.repository.clone(),
+                        password_file: Some(config.system.backups.restic.password_file.clone()),
+                        retry_lock_seconds: config.system.backups.restic.retry_lock_seconds,
+                        environment: config.system.backups.restic.environment.clone(),
+                    })
+                };
 
                 let mut found = false;
                 let mut cache = RESTIC_BACKUP_CACHE.write().await;
@@ -366,18 +371,19 @@ impl BackupFindExt for ResticBackup {
             })));
         }
 
-        if tokio::fs::metadata(&state.config.system.backups.restic.password_file)
+        if tokio::fs::metadata(&state.config.load().system.backups.restic.password_file)
             .await
             .is_ok()
         {
+            let config = state.config.load();
             let output = match Command::new("restic")
-                .envs(&state.config.system.backups.restic.environment)
+                .envs(&config.system.backups.restic.environment)
                 .arg("--json")
                 .arg("--no-lock")
                 .arg("--repo")
-                .arg(&state.config.system.backups.restic.repository)
+                .arg(&config.system.backups.restic.repository)
                 .arg("--password-file")
-                .arg(&state.config.system.backups.restic.password_file)
+                .arg(&config.system.backups.restic.password_file)
                 .arg("--cache-dir")
                 .arg(get_restic_cache_dir(&state.config))
                 .arg("snapshots")
@@ -393,12 +399,16 @@ impl BackupFindExt for ResticBackup {
             if output.status.success() {
                 let snapshots: Vec<ResticSnapshot> =
                     serde_json::from_slice(&output.stdout).unwrap_or_default();
-                let configuration = Arc::new(ResticBackupConfiguration {
-                    repository: state.config.system.backups.restic.repository.clone(),
-                    password_file: Some(state.config.system.backups.restic.password_file.clone()),
-                    retry_lock_seconds: state.config.system.backups.restic.retry_lock_seconds,
-                    environment: state.config.system.backups.restic.environment.clone(),
-                });
+                let configuration = {
+                    let config = state.config.load();
+
+                    Arc::new(ResticBackupConfiguration {
+                        repository: config.system.backups.restic.repository.clone(),
+                        password_file: Some(config.system.backups.restic.password_file.clone()),
+                        retry_lock_seconds: config.system.backups.restic.retry_lock_seconds,
+                        environment: config.system.backups.restic.environment.clone(),
+                    })
+                };
 
                 let mut backup = None;
                 let mut cache = RESTIC_BACKUP_CACHE.write().await;
@@ -524,129 +534,112 @@ impl BackupCreateExt for ResticBackup {
             excluded_paths.push(line);
         }
 
-        let (mut child, configuration) =
-            if tokio::fs::metadata(&server.app_state.config.system.backups.restic.password_file)
-                .await
-                .is_ok()
-            {
-                (
-                    Command::new("restic")
-                        .envs(&server.app_state.config.system.backups.restic.environment)
-                        .arg("--json")
-                        .arg("--repo")
-                        .arg(&server.app_state.config.system.backups.restic.repository)
-                        .arg("--password-file")
-                        .arg(&server.app_state.config.system.backups.restic.password_file)
-                        .arg("--cache-dir")
-                        .arg(get_restic_cache_dir(&server.app_state.config))
-                        .arg("--retry-lock")
-                        .arg(format!(
-                            "{}s",
-                            server
-                                .app_state
-                                .config
-                                .system
-                                .backups
-                                .restic
-                                .retry_lock_seconds
-                        ))
-                        .arg("backup")
-                        .arg(&server.filesystem.base_path)
-                        .args(&excluded_paths)
-                        .arg("--tag")
-                        .arg(uuid.to_string())
-                        .arg("--group-by")
-                        .arg("tags")
-                        .arg("--limit-download")
-                        .arg(
-                            (server.app_state.config.system.backups.read_limit.as_kib())
-                                .to_compact_string(),
-                        )
-                        .arg("--limit-upload")
-                        .arg(
-                            (server.app_state.config.system.backups.write_limit.as_kib())
-                                .to_compact_string(),
-                        )
-                        .stdout(std::process::Stdio::piped())
-                        .stderr(std::process::Stdio::piped())
-                        .spawn()?,
-                    ResticBackupConfiguration {
-                        repository: server
-                            .app_state
-                            .config
-                            .system
-                            .backups
-                            .restic
-                            .repository
-                            .clone(),
-                        password_file: Some(
-                            server
-                                .app_state
-                                .config
-                                .system
-                                .backups
-                                .restic
-                                .password_file
-                                .clone(),
-                        ),
-                        retry_lock_seconds: server
-                            .app_state
-                            .config
-                            .system
-                            .backups
-                            .restic
-                            .retry_lock_seconds,
-                        environment: server
-                            .app_state
-                            .config
-                            .system
-                            .backups
-                            .restic
-                            .environment
-                            .clone(),
-                    },
-                )
-            } else {
-                let configuration = server
-                    .app_state
-                    .config
-                    .client
-                    .backup_restic_configuration(uuid)
-                    .await?;
+        let (mut child, configuration) = if tokio::fs::metadata(
+            &server
+                .app_state
+                .config
+                .load()
+                .system
+                .backups
+                .restic
+                .password_file,
+        )
+        .await
+        .is_ok()
+        {
+            let config = server.app_state.config.load();
 
-                (
-                    Command::new("restic")
-                        .envs(&configuration.environment)
-                        .arg("--json")
-                        .arg("--repo")
-                        .arg(&configuration.repository)
-                        .arg("--cache-dir")
-                        .arg(get_restic_cache_dir(&server.app_state.config))
-                        .arg("--retry-lock")
-                        .arg(format!("{}s", configuration.retry_lock_seconds))
-                        .arg("backup")
-                        .arg(&server.filesystem.base_path)
-                        .args(&excluded_paths)
-                        .arg("--tag")
-                        .arg(uuid.to_string())
-                        .arg("--group-by")
-                        .arg("tags")
-                        .arg("--limit-download")
-                        .arg(
-                            (server.app_state.config.system.backups.read_limit.as_kib())
-                                .to_compact_string(),
-                        )
-                        .arg("--limit-upload")
-                        .arg(
-                            (server.app_state.config.system.backups.write_limit.as_kib())
-                                .to_compact_string(),
-                        )
-                        .stdout(std::process::Stdio::piped())
-                        .stderr(std::process::Stdio::piped())
-                        .spawn()?,
-                    configuration,
-                )
-            };
+            (
+                Command::new("restic")
+                    .envs(&config.system.backups.restic.environment)
+                    .arg("--json")
+                    .arg("--repo")
+                    .arg(&config.system.backups.restic.repository)
+                    .arg("--password-file")
+                    .arg(&config.system.backups.restic.password_file)
+                    .arg("--cache-dir")
+                    .arg(get_restic_cache_dir(&server.app_state.config))
+                    .arg("--retry-lock")
+                    .arg(format!(
+                        "{}s",
+                        config.system.backups.restic.retry_lock_seconds
+                    ))
+                    .arg("backup")
+                    .arg(&server.filesystem.base_path)
+                    .args(&excluded_paths)
+                    .arg("--tag")
+                    .arg(uuid.to_string())
+                    .arg("--group-by")
+                    .arg("tags")
+                    .arg("--limit-download")
+                    .arg((config.system.backups.read_limit.as_kib()).to_compact_string())
+                    .arg("--limit-upload")
+                    .arg((config.system.backups.write_limit.as_kib()).to_compact_string())
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped())
+                    .spawn()?,
+                ResticBackupConfiguration {
+                    repository: config.system.backups.restic.repository.clone(),
+                    password_file: Some(config.system.backups.restic.password_file.clone()),
+                    retry_lock_seconds: config.system.backups.restic.retry_lock_seconds,
+                    environment: config.system.backups.restic.environment.clone(),
+                },
+            )
+        } else {
+            let configuration = server
+                .app_state
+                .config
+                .client
+                .backup_restic_configuration(uuid)
+                .await?;
+
+            (
+                Command::new("restic")
+                    .envs(&configuration.environment)
+                    .arg("--json")
+                    .arg("--repo")
+                    .arg(&configuration.repository)
+                    .arg("--cache-dir")
+                    .arg(get_restic_cache_dir(&server.app_state.config))
+                    .arg("--retry-lock")
+                    .arg(format!("{}s", configuration.retry_lock_seconds))
+                    .arg("backup")
+                    .arg(&server.filesystem.base_path)
+                    .args(&excluded_paths)
+                    .arg("--tag")
+                    .arg(uuid.to_string())
+                    .arg("--group-by")
+                    .arg("tags")
+                    .arg("--limit-download")
+                    .arg(
+                        (server
+                            .app_state
+                            .config
+                            .load()
+                            .system
+                            .backups
+                            .read_limit
+                            .as_kib())
+                        .to_compact_string(),
+                    )
+                    .arg("--limit-upload")
+                    .arg(
+                        (server
+                            .app_state
+                            .config
+                            .load()
+                            .system
+                            .backups
+                            .write_limit
+                            .as_kib())
+                        .to_compact_string(),
+                    )
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped())
+                    .spawn()?,
+                configuration,
+            )
+        };
 
         let mut line_reader = tokio::io::BufReader::new(child.stdout.take().unwrap()).lines();
 
@@ -736,7 +729,7 @@ impl BackupExt for ResticBackup {
         archive_format: StreamableArchiveFormat,
         _range: Option<ByteRange>,
     ) -> Result<crate::response::ApiResponse, anyhow::Error> {
-        let compression_level = state.config.system.backups.compression_level;
+        let compression_level = state.config.load().system.backups.compression_level;
         let (reader, writer) = tokio::io::simplex(crate::BUFFER_SIZE);
 
         match archive_format {
@@ -826,7 +819,7 @@ impl BackupExt for ResticBackup {
                     .stderr(std::process::Stdio::null())
                     .spawn()?;
 
-                let file_compression_threads = self.config.api.file_compression_threads;
+                let file_compression_threads = self.config.load().api.file_compression_threads;
                 crate::spawn_blocking_handled(move || -> Result<(), anyhow::Error> {
                     let mut writer = CompressionWriter::new(
                         tokio_util::io::SyncIoBridge::new(writer),
@@ -866,7 +859,7 @@ impl BackupExt for ResticBackup {
                     .stderr(std::process::Stdio::null())
                     .spawn()?;
 
-                let file_compression_threads = self.config.api.file_compression_threads;
+                let file_compression_threads = self.config.load().api.file_compression_threads;
                 crate::spawn_blocking_handled(move || -> Result<(), anyhow::Error> {
                     let writer = CompressionWriter::new(
                         tokio_util::io::SyncIoBridge::new(writer),
@@ -1025,7 +1018,17 @@ impl BackupExt for ResticBackup {
             .arg("--target")
             .arg(&server.filesystem.base_path)
             .arg("--limit-download")
-            .arg((server.app_state.config.system.backups.read_limit.as_kib()).to_compact_string())
+            .arg(
+                (server
+                    .app_state
+                    .config
+                    .load()
+                    .system
+                    .backups
+                    .read_limit
+                    .as_kib())
+                .to_compact_string(),
+            )
             .arg("-vv")
             .stdout(std::process::Stdio::piped())
             .spawn()?;
@@ -1777,7 +1780,13 @@ impl VirtualReadableFilesystem for VirtualResticBackup {
         let configuration = self.configuration.clone();
         let config = self.server.app_state.config.clone();
         let short_id = self.short_id.clone();
-        let file_compression_threads = self.server.app_state.config.api.file_compression_threads;
+        let file_compression_threads = self
+            .server
+            .app_state
+            .config
+            .load()
+            .api
+            .file_compression_threads;
 
         let spawn_restic = move || {
             std::process::Command::new("restic")
@@ -2102,7 +2111,13 @@ impl VirtualReadableFilesystem for VirtualResticBackup {
         let configuration = self.configuration.clone();
         let config = self.server.app_state.config.clone();
         let short_id = self.short_id.clone();
-        let file_compression_threads = self.server.app_state.config.api.file_compression_threads;
+        let file_compression_threads = self
+            .server
+            .app_state
+            .config
+            .load()
+            .api
+            .file_compression_threads;
 
         let spawn_restic = move |is_dir: bool, path: &Path| {
             std::process::Command::new("restic")

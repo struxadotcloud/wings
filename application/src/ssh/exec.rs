@@ -197,10 +197,11 @@ impl ExecSession {
                                     compression_level: self
                                         .state
                                         .config
+                                        .load()
                                         .system
                                         .backups
                                         .compression_level,
-                                    threads: self.state.config.api.file_compression_threads,
+                                    threads: self.state.config.load().api.file_compression_threads,
                                 },
                             )
                             .await?;

@@ -52,7 +52,7 @@ impl ServerInstaller {
     }
 
     pub fn get_install_logs_path(server: &super::Server) -> std::path::PathBuf {
-        std::path::PathBuf::from(&server.app_state.config.system.log_directory)
+        std::path::PathBuf::from(&server.app_state.config.load().system.log_directory)
             .join(server.uuid.to_string())
             .join("install.log")
     }
@@ -115,7 +115,7 @@ impl ServerInstaller {
         }
 
         tokio::fs::remove_dir_all(
-            Path::new(&self.server.app_state.config.system.tmp_directory)
+            Path::new(&self.server.app_state.config.load().system.tmp_directory)
                 .join(self.server.uuid.to_string()),
         )
         .await
@@ -285,6 +285,7 @@ impl ServerInstaller {
                                 .server
                                 .app_state
                                 .config
+                                .load()
                                 .docker
                                 .installer_limits
                                 .timeout
@@ -295,6 +296,7 @@ impl ServerInstaller {
                                         .server
                                         .app_state
                                         .config
+                                        .load()
                                         .docker
                                         .installer_limits
                                         .timeout,
@@ -437,6 +439,7 @@ impl ServerInstaller {
                                 .server
                                 .app_state
                                 .config
+                                .load()
                                 .docker
                                 .installer_limits
                                 .timeout
@@ -447,6 +450,7 @@ impl ServerInstaller {
                                         .server
                                         .app_state
                                         .config
+                                        .load()
                                         .docker
                                         .installer_limits
                                         .timeout,

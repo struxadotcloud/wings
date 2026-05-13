@@ -522,7 +522,7 @@ pub async fn handle_extended(
                         free_file_nodes: 0,
                         available_file_nodes: 0,
                         filesystem_id: 0,
-                        mount_flags: sftp_session.state.config.system.sftp.read_only as u64,
+                        mount_flags: sftp_session.state.config.load().system.sftp.read_only as u64,
                         max_filename_length: 255,
                     })
                     .unwrap()
@@ -542,7 +542,7 @@ pub async fn handle_extended(
                 Err(_) => return Err(StatusCode::BadMessage),
             };
 
-            if sftp_session.state.config.system.sftp.read_only {
+            if sftp_session.state.config.load().system.sftp.read_only {
                 return Err(StatusCode::PermissionDenied);
             }
 
@@ -629,7 +629,7 @@ pub async fn handle_extended(
                 Err(_) => return Err(StatusCode::BadMessage),
             };
 
-            if sftp_session.state.config.system.sftp.read_only {
+            if sftp_session.state.config.load().system.sftp.read_only {
                 return Err(StatusCode::PermissionDenied);
             }
 
@@ -670,7 +670,7 @@ pub async fn handle_extended(
                 Err(_) => return Err(StatusCode::BadMessage),
             };
 
-            if sftp_session.state.config.system.sftp.read_only {
+            if sftp_session.state.config.load().system.sftp.read_only {
                 return Err(StatusCode::PermissionDenied);
             }
 
@@ -733,7 +733,8 @@ pub async fn handle_extended(
                 };
 
                 if uid == 0 {
-                    let username = &sftp_session.state.config.system.username;
+                    let config = sftp_session.state.config.load();
+                    let username = &config.system.username;
 
                     users.put_u32(username.len() as u32);
                     users.extend(username.as_bytes());
@@ -750,7 +751,8 @@ pub async fn handle_extended(
                 };
 
                 if gid == 0 {
-                    let username = &sftp_session.state.config.system.username;
+                    let config = sftp_session.state.config.load();
+                    let username = &config.system.username;
 
                     groups.put_u32(username.len() as u32);
                     groups.extend(username.as_bytes());

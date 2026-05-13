@@ -44,7 +44,7 @@ pub struct SshSession {
 impl SshSession {
     fn get_auth_methods(&self) -> MethodSet {
         let mut methods = MethodSet::empty();
-        if !self.state.config.system.sftp.disable_password_auth {
+        if !self.state.config.load().system.sftp.disable_password_auth {
             methods.push(russh::MethodKind::Password);
         }
         methods.push(russh::MethodKind::PublicKey);
@@ -68,7 +68,7 @@ impl russh::server::Handler for SshSession {
     }
 
     async fn auth_password(&mut self, username: &str, password: &str) -> Result<Auth, Self::Error> {
-        if self.state.config.system.sftp.disable_password_auth {
+        if self.state.config.load().system.sftp.disable_password_auth {
             return Ok(Auth::UnsupportedMethod);
         }
 
@@ -131,7 +131,7 @@ impl russh::server::Handler for SshSession {
             .user_permissions
             .set_permissions(user, permissions, Some(&ignored_files))
             .await;
-        if self.state.config.system.sftp.activity.log_logins {
+        if self.state.config.load().system.sftp.activity.log_logins {
             server
                 .activity
                 .log_activity(Activity {
@@ -217,7 +217,7 @@ impl russh::server::Handler for SshSession {
             .user_permissions
             .set_permissions(user, permissions, Some(&ignored_files))
             .await;
-        if self.state.config.system.sftp.activity.log_logins {
+        if self.state.config.load().system.sftp.activity.log_logins {
             server
                 .activity
                 .log_activity(Activity {
@@ -269,7 +269,7 @@ impl russh::server::Handler for SshSession {
     ) -> Result<(), Self::Error> {
         tracing::debug!("channel shell request: {}", channel_id);
 
-        if !self.state.config.system.sftp.shell.enabled {
+        if !self.state.config.load().system.sftp.shell.enabled {
             return Err(russh::Error::RequestDenied);
         }
 

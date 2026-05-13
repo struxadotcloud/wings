@@ -43,7 +43,6 @@ impl ShellSession {
         line: &str,
         writer: &mut Pin<Box<impl tokio::io::AsyncWrite>>,
     ) {
-        let prefix = &self.state.config.system.sftp.shell.cli.name;
         writer.write_all(b"\r\n").await.unwrap_or_default();
 
         let prelude = self.state.config.daemon_prelude();
@@ -251,6 +250,8 @@ impl ShellSession {
                     }
                 }
                 _ => {
+                    let config = self.state.config.load();
+                    let prefix = &config.system.sftp.shell.cli.name;
                     writeln(&format!("Usage: {prefix} power <start|restart|stop|kill>")).await;
                 }
             },
@@ -468,7 +469,9 @@ impl ShellSession {
 
                     match self.mode {
                         ShellMode::Normal => {
-                            if line.starts_with(&self.state.config.system.sftp.shell.cli.name) {
+                            if line
+                                .starts_with(&self.state.config.load().system.sftp.shell.cli.name)
+                            {
                                 self.handle_cli_command(&line, data_writer).await;
                             } else if self.has_permission(Permission::ControlConsole).await {
                                 if self.server.state.get_state()
@@ -625,7 +628,7 @@ impl ShellSession {
                 .write_all(
                     format!(
                         "\x1b]0;{} - {}\x07",
-                        self.state.config.app_name,
+                        self.state.config.load().app_name,
                         self.server.configuration.read().await.meta.name
                     )
                     .as_bytes(),
@@ -641,7 +644,7 @@ impl ShellSession {
             {
                 let mut log_stream = self
                     .server
-                    .logs(Some(self.state.config.system.websocket_log_count))
+                    .logs(Some(self.state.config.load().system.websocket_log_count))
                     .await;
 
                 {
@@ -661,7 +664,7 @@ impl ShellSession {
                 }
 
                 if self.server.state.get_state() != crate::server::state::ServerState::Offline
-                    || self.state.config.api.send_offline_server_logs
+                    || self.state.config.load().api.send_offline_server_logs
                 {
                     tokio::io::copy(&mut log_stream, &mut writer.make_writer())
                         .await

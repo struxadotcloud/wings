@@ -72,7 +72,7 @@ pub async fn handle_message(
         }
         WebsocketEvent::SendServerLogs => {
             if server.state.get_state() != crate::server::state::ServerState::Offline
-                || state.config.api.send_offline_server_logs
+                || state.config.load().api.send_offline_server_logs
             {
                 let socket_jwt = websocket_handler.get_jwt().await?;
 
@@ -85,7 +85,7 @@ pub async fn handle_message(
                 drop(socket_jwt);
 
                 let mut log_stream = server
-                    .logs_lines(Some(state.config.system.websocket_log_count))
+                    .logs_lines(Some(state.config.load().system.websocket_log_count))
                     .await;
 
                 while let Some(Ok(line)) = log_stream.next().await {

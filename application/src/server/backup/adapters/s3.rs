@@ -46,6 +46,7 @@ async fn get_client(server: &crate::server::Server) -> Arc<reqwest::Client> {
                 server
                     .app_state
                     .config
+                    .load()
                     .system
                     .backups
                     .s3
@@ -130,7 +131,7 @@ pub struct S3Backup {
 impl S3Backup {
     #[inline]
     fn get_file_name(config: &crate::config::Config, uuid: uuid::Uuid) -> PathBuf {
-        Path::new(&config.system.backup_directory).join(format!("{uuid}.s3.tar.gz"))
+        Path::new(&config.load().system.backup_directory).join(format!("{uuid}.s3.tar.gz"))
     }
 }
 
@@ -224,6 +225,7 @@ impl BackupCreateExt for S3Backup {
                 server
                     .app_state
                     .config
+                    .load()
                     .system
                     .backups
                     .write_limit
@@ -239,8 +241,21 @@ impl BackupCreateExt for S3Backup {
                 ignore.into(),
                 crate::server::filesystem::archive::create::CreateTarOptions {
                     compression_type: CompressionType::Gz,
-                    compression_level: server.app_state.config.system.backups.compression_level,
-                    threads: server.app_state.config.system.backups.s3.create_threads,
+                    compression_level: server
+                        .app_state
+                        .config
+                        .load()
+                        .system
+                        .backups
+                        .compression_level,
+                    threads: server
+                        .app_state
+                        .config
+                        .load()
+                        .system
+                        .backups
+                        .s3
+                        .create_threads,
                 },
             )
             .await?;
@@ -272,10 +287,10 @@ impl BackupCreateExt for S3Backup {
             let mut attempts = 0;
             loop {
                 attempts += 1;
-                if attempts > server.app_state.config.system.backups.s3.retry_limit {
+                if attempts > server.app_state.config.load().system.backups.s3.retry_limit {
                     return Err(anyhow::anyhow!(
                         "failed to upload s3 part after {} attempts",
-                        server.app_state.config.system.backups.s3.retry_limit
+                        server.app_state.config.load().system.backups.s3.retry_limit
                     ));
                 }
 
@@ -305,6 +320,7 @@ impl BackupCreateExt for S3Backup {
                                 server
                                     .app_state
                                     .config
+                                    .load()
                                     .system
                                     .backups
                                     .write_limit
@@ -429,7 +445,7 @@ impl BackupExt for S3Backup {
             let reader = tokio_util::io::SyncIoBridge::new(reader);
             let reader = LimitedReader::new_with_bytes_per_second(
                 reader,
-                server.app_state.config.system.backups.read_limit.as_bytes(),
+                server.app_state.config.load().system.backups.read_limit.as_bytes(),
             );
             let reader = CountingReader::new_with_bytes_read(reader, progress);
             let reader = CompressionReader::new(

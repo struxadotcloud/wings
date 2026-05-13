@@ -11,7 +11,7 @@ mod get {
         (status = OK, body = inline(crate::config::InnerConfig)),
     ))]
     pub async fn route(state: GetState) -> ApiResponseResult {
-        ApiResponse::new_serialized(&**state.config).ok()
+        ApiResponse::new_serialized(&**state.config.load()).ok()
     }
 }
 

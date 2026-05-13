@@ -121,6 +121,7 @@ impl DockerServerConfigurationExt for crate::server::configuration::ServerConfig
         &self,
         config: &crate::config::Config,
     ) -> bollard::models::PortMap {
+        let config = config.load();
         let iface = &config.docker.network.interface;
         let mut map = self.convert_allocations_bindings();
 
@@ -170,7 +171,7 @@ impl DockerServerConfigurationExt for crate::server::configuration::ServerConfig
         filesystem: &crate::server::filesystem::Filesystem,
     ) -> bollard::plugin::ContainerCreateBody {
         let mut labels = self.labels.clone();
-        labels.insert("Service".into(), config.app_name.clone());
+        labels.insert("Service".into(), config.load().app_name.clone());
         labels.insert("ContainerType".into(), "server_process".into());
 
         let network_mode = if self.allocations.force_outgoing_ip
@@ -212,7 +213,7 @@ impl DockerServerConfigurationExt for crate::server::configuration::ServerConfig
 
             network_name
         } else {
-            config.docker.network.mode.clone()
+            config.load().docker.network.mode.clone()
         };
 
         let resources = self.convert_container_resources(config);
@@ -236,15 +237,16 @@ impl DockerServerConfigurationExt for crate::server::configuration::ServerConfig
                 #[cfg(unix)]
                 devices: Some(self.convert_devices()),
                 network_mode: Some(network_mode),
-                dns: Some(config.docker.network.dns.clone()),
+                dns: Some(config.load().docker.network.dns.clone()),
                 tmpfs: Some(HashMap::from([(
                     "/tmp".to_string(),
-                    format!("rw,exec,nosuid,size={}M", config.docker.tmpfs_size),
+                    format!("rw,exec,nosuid,size={}M", config.load().docker.tmpfs_size),
                 )])),
                 log_config: Some(bollard::plugin::HostConfigLogConfig {
-                    typ: Some(config.docker.log_config.r#type.clone()),
+                    typ: Some(config.load().docker.log_config.r#type.clone()),
                     config: Some(
                         config
+                            .load()
                             .docker
                             .log_config
                             .config
@@ -276,22 +278,26 @@ impl DockerServerConfigurationExt for crate::server::configuration::ServerConfig
                     "setfcap".to_string(),
                     "sys_ptrace".to_string(),
                 ]),
-                userns_mode: string_to_option(&config.docker.userns_mode),
+                userns_mode: string_to_option(&config.load().docker.userns_mode),
                 readonly_rootfs: Some(true),
                 ..Default::default()
             }),
             hostname: Some(self.uuid.to_string()),
-            domainname: string_to_option(&config.docker.domainname),
+            domainname: string_to_option(&config.load().docker.domainname),
             entrypoint: self.entrypoint.clone(),
             image: Some(self.container.image.trim_end_matches('~').to_string()),
             env: Some(self.environment(config)),
-            user: Some(if config.system.user.rootless.enabled {
+            user: Some(if config.load().system.user.rootless.enabled {
+                let config = config.load();
+
                 format!(
                     "{}:{}",
                     config.system.user.rootless.container_uid,
                     config.system.user.rootless.container_gid
                 )
             } else {
+                let config = config.load();
+
                 format!("{}:{}", config.system.user.uid, config.system.user.gid)
             }),
             labels: Some(labels),
@@ -328,6 +334,7 @@ impl DockerServerConfigurationExt for crate::server::configuration::ServerConfig
     fn installer_resources(&self, config: &crate::config::Config) -> bollard::models::Resources {
         let mut resources = self.convert_container_resources(config);
 
+        let config = config.load();
         let installer_limits = &config.docker.installer_limits;
 
         if resources
@@ -377,7 +384,7 @@ impl DockerExecutor {
         }
 
         let mut registry_auth = None;
-        for (registry, config) in self.app_config.docker.registries.iter() {
+        for (registry, config) in self.app_config.load().docker.registries.iter() {
             if image.starts_with(registry.as_str()) {
                 registry_auth = Some(bollard::auth::DockerCredentials {
                     username: Some(config.username.clone()),
@@ -634,14 +641,14 @@ impl DockerProcessHandle {
                 let mut allow_ratelimit = || {
                     ratelimit_counter += 1;
 
-                    if app_config.throttles.enabled
-                        && app_config.throttles.line_reset_interval > 0
-                        && ratelimit_counter >= app_config.throttles.lines
+                    let config = app_config.load();
+
+                    if config.throttles.enabled
+                        && config.throttles.line_reset_interval > 0
+                        && ratelimit_counter >= config.throttles.lines
                     {
                         if ratelimit_start.elapsed()
-                            < std::time::Duration::from_millis(
-                                app_config.throttles.line_reset_interval,
-                            )
+                            < std::time::Duration::from_millis(config.throttles.line_reset_interval)
                         {
                             return false;
                         } else {
@@ -1088,7 +1095,7 @@ impl super::ServerExecutor for DockerExecutor {
 
         let container_name = {
             let cfg = server.configuration.read().await;
-            if self.app_config.docker.server_name_in_container_name {
+            if self.app_config.load().docker.server_name_in_container_name {
                 let mut filtered = String::new();
                 for c in cfg.meta.name.chars() {
                     if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
@@ -1225,7 +1232,7 @@ impl super::ServerExecutor for DockerExecutor {
         drop(server_config);
 
         let tmp_dir =
-            Path::new(&self.app_config.system.tmp_directory).join(server.uuid.to_string());
+            Path::new(&self.app_config.load().system.tmp_directory).join(server.uuid.to_string());
         tokio::fs::create_dir_all(&tmp_dir).await?;
         tokio::fs::write(
             tmp_dir.join("install.sh"),
@@ -1264,16 +1271,20 @@ impl super::ServerExecutor for DockerExecutor {
                         ..Default::default()
                     },
                 ]),
-                network_mode: Some(self.app_config.docker.network.mode.clone()),
-                dns: Some(self.app_config.docker.network.dns.clone()),
+                network_mode: Some(self.app_config.load().docker.network.mode.clone()),
+                dns: Some(self.app_config.load().docker.network.dns.clone()),
                 tmpfs: Some(HashMap::from([(
                     "/tmp".to_string(),
-                    format!("rw,exec,nosuid,size={}M", self.app_config.docker.tmpfs_size),
+                    format!(
+                        "rw,exec,nosuid,size={}M",
+                        self.app_config.load().docker.tmpfs_size
+                    ),
                 )])),
                 log_config: Some(bollard::plugin::HostConfigLogConfig {
-                    typ: Some(self.app_config.docker.log_config.r#type.clone()),
+                    typ: Some(self.app_config.load().docker.log_config.r#type.clone()),
                     config: Some(
                         self.app_config
+                            .load()
                             .docker
                             .log_config
                             .config
@@ -1282,7 +1293,7 @@ impl super::ServerExecutor for DockerExecutor {
                             .collect(),
                     ),
                 }),
-                userns_mode: string_to_option(&self.app_config.docker.userns_mode),
+                userns_mode: string_to_option(&self.app_config.load().docker.userns_mode),
                 ..Default::default()
             }),
             cmd: Some(vec![
@@ -1293,7 +1304,10 @@ impl super::ServerExecutor for DockerExecutor {
             image: Some(script.container_image.trim_end_matches('~').to_string()),
             env: Some(env),
             labels: Some(HashMap::from([
-                ("Service".to_string(), self.app_config.app_name.clone()),
+                (
+                    "Service".to_string(),
+                    self.app_config.load().app_name.clone(),
+                ),
                 ("ContainerType".to_string(), "server_installer".to_string()),
             ])),
             attach_stdin: Some(true),
@@ -1420,7 +1434,7 @@ impl super::ServerExecutor for DockerExecutor {
         drop(server_config);
 
         let tmp_dir =
-            Path::new(&self.app_config.system.tmp_directory).join(server.uuid.to_string());
+            Path::new(&self.app_config.load().system.tmp_directory).join(server.uuid.to_string());
         tokio::fs::create_dir_all(&tmp_dir).await?;
         tokio::fs::write(
             tmp_dir.join("script.sh"),
@@ -1459,16 +1473,20 @@ impl super::ServerExecutor for DockerExecutor {
                         ..Default::default()
                     },
                 ]),
-                network_mode: Some(self.app_config.docker.network.mode.clone()),
-                dns: Some(self.app_config.docker.network.dns.clone()),
+                network_mode: Some(self.app_config.load().docker.network.mode.clone()),
+                dns: Some(self.app_config.load().docker.network.dns.clone()),
                 tmpfs: Some(HashMap::from([(
                     "/tmp".to_string(),
-                    format!("rw,exec,nosuid,size={}M", self.app_config.docker.tmpfs_size),
+                    format!(
+                        "rw,exec,nosuid,size={}M",
+                        self.app_config.load().docker.tmpfs_size
+                    ),
                 )])),
                 log_config: Some(bollard::plugin::HostConfigLogConfig {
-                    typ: Some(self.app_config.docker.log_config.r#type.clone()),
+                    typ: Some(self.app_config.load().docker.log_config.r#type.clone()),
                     config: Some(
                         self.app_config
+                            .load()
                             .docker
                             .log_config
                             .config
@@ -1477,7 +1495,7 @@ impl super::ServerExecutor for DockerExecutor {
                             .collect(),
                     ),
                 }),
-                userns_mode: string_to_option(&self.app_config.docker.userns_mode),
+                userns_mode: string_to_option(&self.app_config.load().docker.userns_mode),
                 auto_remove: Some(true),
                 ..Default::default()
             }),
@@ -1489,7 +1507,10 @@ impl super::ServerExecutor for DockerExecutor {
             image: Some(script.container_image.trim_end_matches('~').to_string()),
             env: Some(env),
             labels: Some(HashMap::from([
-                ("Service".to_string(), self.app_config.app_name.clone()),
+                (
+                    "Service".to_string(),
+                    self.app_config.load().app_name.clone(),
+                ),
                 ("ContainerType".to_string(), "script_runner".to_string()),
             ])),
             attach_stdout: Some(true),

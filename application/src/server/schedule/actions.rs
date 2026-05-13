@@ -1203,11 +1203,11 @@ impl ScheduleAction {
                                             crate::server::filesystem::archive::create::CreateTarOptions {
                                                 compression_type: format.compression_format(),
                                                 compression_level: state
-                                                    .config
+                                                    .config.load()
                                                     .system
                                                     .backups
                                                     .compression_level,
-                                                threads: state.config.api.file_compression_threads,
+                                                threads: state.config.load().api.file_compression_threads,
                                             },
                                         )
                                         .await
@@ -1222,7 +1222,7 @@ impl ScheduleAction {
                                             ignored.into(),
                                             crate::server::filesystem::archive::create::CreateZipOptions {
                                                 compression_level: state
-                                                    .config
+                                                    .config.load()
                                                     .system
                                                     .backups
                                                     .compression_level,
@@ -1240,11 +1240,11 @@ impl ScheduleAction {
                                             ignored.into(),
                                             crate::server::filesystem::archive::create::Create7zOptions {
                                                 compression_level: state
-                                                    .config
+                                                    .config.load()
                                                     .system
                                                     .backups
                                                     .compression_level,
-                                                threads: state.config.api.file_compression_threads,
+                                                threads: state.config.load().api.file_compression_threads,
                                             },
                                         )
                                         .await
