@@ -30,8 +30,11 @@ mod get {
     #[derive(ToSchema, Serialize)]
     struct Response {
         total: usize,
+
+        filesystem_primary: bool,
         filesystem_writable: bool,
         filesystem_fast: bool,
+
         entries: Vec<crate::models::DirectoryEntry>,
     }
 
@@ -129,6 +132,7 @@ mod get {
 
         ApiResponse::new_serialized(Response {
             total: entries.total_entries,
+            filesystem_primary: filesystem.is_primary_server_fs(),
             filesystem_writable: filesystem.is_writable(),
             filesystem_fast: filesystem.is_fast(),
             entries: entries.entries,

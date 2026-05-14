@@ -11,6 +11,7 @@ mod create_directory;
 mod decompress;
 mod delete;
 mod fingerprints;
+mod largest_directories;
 mod list;
 mod list_directory;
 mod operations;
@@ -31,6 +32,7 @@ pub fn router(state: &State) -> OpenApiRouter<State> {
         .nest("/copy-remote", copy_remote::router(state))
         .nest("/write", write::router(state))
         .nest("/create-directory", create_directory::router(state))
+        .nest("/largest-directories", largest_directories::router(state))
         .nest("/delete", delete::router(state))
         .nest("/chmod", chmod::router(state))
         .nest("/search", search::router(state))
