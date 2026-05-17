@@ -2,7 +2,7 @@
 
 ## Supported Versions
 
-The following versions of Calagopus wings are currently receiving security updates:
+The following versions of Struxa Wings are currently receiving security updates:
 
 | Version | Supported              |
 |---------|------------------------|
@@ -19,7 +19,7 @@ We take the security of this project seriously. If you believe you have found a 
 
 Please report vulnerabilities using one of the following methods:
 - **GitHub Private Vulnerability Reporting**: Use the [Security Advisories](../../security/advisories/new) tab in this repository.
-- **Email**: Send details to `security@calagopus.com`. If the report contains sensitive information, please encrypt it using our [PGP key](https://github.com/calagopus/branding/blob/main/SECURITY-PGP.md).
+- **Email**: Send details to `security@struxa.cloud`.
 
 Please include as much of the following information as possible to help us understand and reproduce the issue:
 - Type of vulnerability
@@ -32,6 +32,3 @@ We kindly ask that you:
 - Avoid accessing or modifying data that does not belong to you.
 - Act in good faith and avoid actions that could harm the project or its users.
 
-## PGP Key
-If you want to use encrypted communication, you should use our GPG Key.
-For sanity reasons, this key is included in a separate repository ([calagopus/branding SECURITY-PGP.md](https://github.com/calagopus/branding/blob/main/SECURITY-PGP.md)).
