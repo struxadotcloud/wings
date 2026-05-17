@@ -1,4 +1,4 @@
-![Struxa Logo](.github/uploads/logo-white.svg)
+<img src=".github/uploads/logo-white.svg" alt="Struxa Logo" height="64" />
 
 # Struxa Wings
 
