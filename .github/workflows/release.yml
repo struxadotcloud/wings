@@ -138,12 +138,12 @@ jobs:
       - name: Prepare binaries
         run: |
           mkdir -p .docker/amd64 .docker/arm64 .docker/riscv64 .docker/ppc64le
-          cp dist/${{ env.PROJECT_NAME }}-x86_64-linux/${{ env.BIN_NAME }}-x86_64-linux .docker/amd64/calagopus-wings
-          cp dist/${{ env.PROJECT_NAME }}-aarch64-linux/${{ env.BIN_NAME }}-aarch64-linux .docker/arm64/calagopus-wings
-          cp dist/${{ env.PROJECT_NAME }}-riscv64-linux/${{ env.BIN_NAME }}-riscv64-linux .docker/riscv64/calagopus-wings
-          cp dist/${{ env.PROJECT_NAME }}-ppc64le-linux/${{ env.BIN_NAME }}-ppc64le-linux .docker/ppc64le/calagopus-wings
+          cp dist/${{ env.PROJECT_NAME }}-x86_64-linux/${{ env.BIN_NAME }}-x86_64-linux .docker/amd64/struxa-wings
+          cp dist/${{ env.PROJECT_NAME }}-aarch64-linux/${{ env.BIN_NAME }}-aarch64-linux .docker/arm64/struxa-wings
+          cp dist/${{ env.PROJECT_NAME }}-riscv64-linux/${{ env.BIN_NAME }}-riscv64-linux .docker/riscv64/struxa-wings
+          cp dist/${{ env.PROJECT_NAME }}-ppc64le-linux/${{ env.BIN_NAME }}-ppc64le-linux .docker/ppc64le/struxa-wings
 
-          chmod +x .docker/*/calagopus-wings
+          chmod +x .docker/*/struxa-wings
 
       - name: Extract version and determine tags
         id: prep_tags

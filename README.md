@@ -1,22 +1,31 @@
-![Calagopus Logo](https://calagopus.com/fulllogo.svg)
+![Struxa Logo](.github/uploads/logo-white.svg)
 
-# Calagopus Wings
+# Struxa Wings
 
-[![Rust](https://img.shields.io/badge/rust-stable-orange.svg?logo=rust)](https://www.rust-lang.org/)
-[![License](https://img.shields.io/github/license/calagopus/wings?color=blue)](https://github.com/calagopus/wings/blob/main/LICENSE)
-[![GitHub issues](https://img.shields.io/github/issues/calagopus/wings)](https://github.com/calagopus/wings/issues)
-[![GitHub stars](https://img.shields.io/github/stars/calagopus/wings)](https://github.com/calagopus/wings/stargazers)
-[![Discord](https://img.shields.io/discord/1429911351777824892?label=discord&logo=discord&color=5865F2)](https://discord.gg/uSM8tvTxBV)
+[![Rust](https://shieldcn.dev/badge/rust-stable-orange.svg?logo=rust)](https://www.rust-lang.org/)
+[![License](https://shieldcn.dev/github/license/struxadotcloud/wings.svg)](https://github.com/struxadotcloud/wings/blob/main/LICENSE)
+[![GitHub issues](https://shieldcn.dev/github/issues/struxadotcloud/wings.svg)](https://github.com/struxadotcloud/wings/issues)
+[![GitHub stars](https://shieldcn.dev/github/stars/struxadotcloud/wings.svg)](https://github.com/struxadotcloud/wings/stargazers)
 
-A rewrite of [Pterodactyl Wings](https://github.com/pterodactyl/wings) in the Rust programming language. This rewrite aims to be 100% API compatible while implementing new features and better performance.
+> **Fork notice:** This is a fork of [Calagopus Wings](https://github.com/calagopus/wings) maintained for use with [Struxa](https://github.com/struxadotcloud/struxa).
 
-[Todo](https://notes.rjns.dev/workspace/cb7ccae8-0508-4f90-9161-d1e69b0ca8f0/uAVAL7iHSQpDk1SiSUPL1)
+The node agent for [Struxa](https://github.com/struxadotcloud/struxa) — a self-hosted game server management panel. This agent runs on each node and handles server lifecycle, file management, backups, and SFTP access.
+
+Built on a Rust rewrite of [Pterodactyl Wings](https://github.com/pterodactyl/wings), aiming for 100% API compatibility while adding new features and better performance.
+
+## Related repositories
+
+| Repository | Description |
+|---|---|
+| [struxadotcloud/struxa](https://github.com/struxadotcloud/struxa) | Main panel — web UI, API, database |
+| [struxadotcloud/wings](https://github.com/struxadotcloud/wings) | This repo — node agent (you are here) |
 
 ## Installation
 
-For installation instructions, please refer to the [Docs](https://calagopus.com/docs/wings/installation).
+For installation instructions, please refer to the [Struxa documentation](https://docs.struxa.cloud).
 
-## Added Config Options
+<details>
+<summary><strong>Added Config Options</strong> (fork additions over upstream)</summary>
 
 ```yml
 api:
@@ -193,7 +202,10 @@ remote_query:
 ignore_panel_wings_upgrades: false
 ```
 
-## Added Features
+</details>
+
+<details>
+<summary><strong>Added Features</strong> (fork additions over upstream)</summary>
 
 ### API
 
@@ -258,6 +270,4 @@ ignore_panel_wings_upgrades: false
 
 - add `service-install` command to automatically setup a service for wings
 
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=calagopus/wings&type=date&legend=top-left)](https://www.star-history.com/#calagopus/wings&type=date&legend=top-left)
+</details>
