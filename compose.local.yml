@@ -1,6 +1,9 @@
 services:
   wings:
-    image: ghcr.io/calagopus/wings:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.local
+    pull_policy: build
     restart: unless-stopped
     environment:
       TZ: "Europe/Berlin"
@@ -9,7 +12,7 @@ services:
       WINGS_USERNAME: pterodactyl
     volumes:
       - "/var/run/docker.sock:/var/run/docker.sock"
-      - "/var/lib/docker/containers/:/var/lib/docker/containers/"
+      - "/var/lib/docker/:/var/lib/docker/"
       # this is exclusively for the main wings configuration file, called config.yml
       - "./config:/etc/pterodactyl/"
       # please note: if you change the /var/lib/pterodactyl path and split it up, make sure to include the following paths properly (all in the config.yml):

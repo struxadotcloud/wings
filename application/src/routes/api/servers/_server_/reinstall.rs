@@ -35,15 +35,12 @@ mod post {
     ), request_body = inline(Payload))]
     pub async fn route(
         server: GetServer,
-        data: Result<crate::Payload<Payload>, crate::payload::PayloadRejection>,
+        data: Option<crate::Payload<Payload>>,
     ) -> ApiResponseResult {
-        let data = match data {
-            Ok(data) => data.0,
-            Err(_) => Payload {
-                truncate_directory: false,
-                installation_script: None,
-            },
-        };
+        let data = data.map(|p| p.0).unwrap_or(Payload {
+            truncate_directory: false,
+            installation_script: None,
+        });
 
         if let Some(state) = server.locked_state() {
             return ApiResponse::error(&format!(

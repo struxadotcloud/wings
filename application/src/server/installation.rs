@@ -103,23 +103,37 @@ impl ServerInstaller {
     }
 
     pub async fn unset_installing(&self, successful: bool) -> Result<(), anyhow::Error> {
+        tracing::info!(
+            server = %self.server.uuid,
+            successful = successful,
+            reinstall = self.reinstall,
+            "unset_installing: beginning cleanup"
+        );
         self.server.installing.store(false, Ordering::SeqCst);
         self.server.installer.write().await.take();
 
+        tracing::debug!(server = %self.server.uuid, "unset_installing: cleaning up installation container");
         if let Err(err) = self.cleanup_container().await {
             tracing::error!(
                 server = %self.server.uuid,
-                "failed to cleanup installation container: {}",
-                err
+                error = %err,
+                "unset_installing: failed to cleanup installation container"
             );
+        } else {
+            tracing::debug!(server = %self.server.uuid, "unset_installing: container cleanup done");
         }
 
-        tokio::fs::remove_dir_all(
-            Path::new(&self.server.app_state.config.load().system.tmp_directory)
-                .join(self.server.uuid.to_string()),
-        )
-        .await
-        .ok();
+        let tmp_dir = Path::new(&self.server.app_state.config.load().system.tmp_directory)
+            .join(self.server.uuid.to_string());
+        tracing::debug!(server = %self.server.uuid, tmp_dir = %tmp_dir.display(), "unset_installing: removing tmp directory");
+        tokio::fs::remove_dir_all(&tmp_dir).await.ok();
+
+        tracing::debug!(
+            server = %self.server.uuid,
+            successful = successful,
+            reinstall = self.reinstall,
+            "unset_installing: notifying panel of install result"
+        );
         if let Err(err) = self
             .server
             .app_state
@@ -130,8 +144,15 @@ impl ServerInstaller {
         {
             tracing::error!(
                 server = %self.server.uuid,
-                "failed to set server install status: {}",
-                err
+                successful = successful,
+                error = %err,
+                "unset_installing: failed to notify panel of install status"
+            );
+        } else {
+            tracing::info!(
+                server = %self.server.uuid,
+                successful = successful,
+                "unset_installing: panel notified of install status"
             );
         }
 
@@ -188,7 +209,15 @@ impl ServerInstaller {
         self.server
             .log_daemon("Starting installation process, this could take a few minutes...".into());
 
-        if self.server.configuration.read().await.skip_egg_scripts && !force {
+        let skip_egg_scripts = self.server.configuration.read().await.skip_egg_scripts;
+        tracing::debug!(
+            server = %self.server.uuid,
+            skip_egg_scripts = skip_egg_scripts,
+            force = force,
+            "installation: checking skip_egg_scripts"
+        );
+
+        if skip_egg_scripts && !force {
             self.unset_installing(true).await?;
             tracing::info!(
                 server = %self.server.uuid,
@@ -199,8 +228,16 @@ impl ServerInstaller {
         }
 
         let container_script = match &self.installation_script {
-            Some(container_script) => container_script.clone(),
+            Some(container_script) => {
+                tracing::debug!(
+                    server = %self.server.uuid,
+                    container_image = %container_script.container_image,
+                    "installation: using pre-fetched installation script"
+                );
+                container_script.clone()
+            }
             None => {
+                tracing::debug!(server = %self.server.uuid, "installation: fetching installation script from panel");
                 let container_script = match self
                     .server
                     .app_state
@@ -210,8 +247,22 @@ impl ServerInstaller {
                     .await
                     .context("Failed to fetch installation script")
                 {
-                    Ok(container_script) => Arc::new(container_script),
+                    Ok(container_script) => {
+                        tracing::debug!(
+                            server = %self.server.uuid,
+                            container_image = %container_script.container_image,
+                            entrypoint = %container_script.entrypoint,
+                            script_len = container_script.script.len(),
+                            "installation: received installation script from panel"
+                        );
+                        Arc::new(container_script)
+                    }
                     Err(err) => {
+                        tracing::error!(
+                            server = %self.server.uuid,
+                            error = %err,
+                            "installation: failed to fetch installation script from panel"
+                        );
                         self.unset_installing(false).await?;
                         return Err(err);
                     }
@@ -224,6 +275,7 @@ impl ServerInstaller {
                             .replace(Arc::clone(&container_script));
                     }
                     None => {
+                        tracing::error!(server = %self.server.uuid, "installation: unable to get mutable reference to installer");
                         self.unset_installing(false).await?;
                         return Err(anyhow::anyhow!(
                             "unable to get mutable reference to server installer"
@@ -245,11 +297,21 @@ impl ServerInstaller {
             return Ok(());
         }
 
+        tracing::info!(
+            server = %self.server.uuid,
+            container_image = %container_script.container_image,
+            entrypoint = %container_script.entrypoint,
+            script_len = container_script.script.len(),
+            reinstall = self.reinstall,
+            "installation: spawning installation task"
+        );
+
         tokio::spawn({
             let installer = Arc::clone(self);
 
             async move {
                 let run = async || {
+                    tracing::debug!(server = %installer.server.uuid, "installation: calling setup_installation_process");
                     let (handle, mut status_rx) = match installer
                         .server
                         .app_state
@@ -258,8 +320,16 @@ impl ServerInstaller {
                         .await
                         .context("Failed to setup installation process")
                     {
-                        Ok(r) => r,
+                        Ok(r) => {
+                            tracing::debug!(server = %installer.server.uuid, "installation: setup_installation_process succeeded");
+                            r
+                        }
                         Err(err) => {
+                            tracing::error!(
+                                server = %installer.server.uuid,
+                                error = %err,
+                                "installation: setup_installation_process failed"
+                            );
                             installer.unset_installing(false).await?;
                             return Err(err);
                         }
@@ -274,6 +344,11 @@ impl ServerInstaller {
                     {
                         Ok(rx) => rx,
                         Err(err) => {
+                            tracing::error!(
+                                server = %installer.server.uuid,
+                                error = %err,
+                                "installation: failed to subscribe to stdout"
+                            );
                             installer.unset_installing(false).await?;
                             return Err(err);
                         }
@@ -309,7 +384,17 @@ impl ServerInstaller {
 
                                 async move {
                                     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                                    handle.start().await.context("Failed to start installation container")?;
+                                    tracing::debug!(server = %installer.server.uuid, "installation: starting installer container");
+                                    if let Err(err) = handle.start().await {
+                                        tracing::error!(
+                                            server = %installer.server.uuid,
+                                            error = %err,
+                                            "installation: failed to start installer container"
+                                        );
+                                        return Err(err).context("Failed to start installation container");
+                                    }
+                                    tracing::info!(server = %installer.server.uuid, "installation: installer container started");
+                                    tracing::debug!(server = %installer.server.uuid, "installation: entering stdout loop");
 
                                     loop {
                                         tokio::select! {
@@ -348,8 +433,15 @@ impl ServerInstaller {
                                 }
                             }
                         ) => match result {
-                            Ok(Ok(())) => {}
+                            Ok(Ok(())) => {
+                                tracing::info!(server = %installer.server.uuid, "installation: stdout loop ended, container finished");
+                            }
                             Ok(Err(err)) => {
+                                tracing::error!(
+                                    server = %installer.server.uuid,
+                                    error = %err,
+                                    "installation: error during container run"
+                                );
                                 installer.unset_installing(false).await?;
                                 return Err(anyhow::anyhow!(
                                     "failed to start installation container: {}",
@@ -357,6 +449,11 @@ impl ServerInstaller {
                                 ));
                             }
                             Err(err) => {
+                                tracing::error!(
+                                    server = %installer.server.uuid,
+                                    error = %err,
+                                    "installation: timed out waiting for installer container"
+                                );
                                 installer.unset_installing(false).await?;
                                 return Err(anyhow::anyhow!(
                                     "timeout while waiting for installation: {:#?}",
@@ -372,6 +469,7 @@ impl ServerInstaller {
                         }
                     }
 
+                    tracing::info!(server = %installer.server.uuid, "installation: marking server as installed successfully");
                     installer.unset_installing(true).await?;
 
                     Ok(())

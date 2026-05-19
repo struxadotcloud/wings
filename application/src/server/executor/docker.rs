@@ -216,7 +216,8 @@ impl DockerServerConfigurationExt for crate::server::configuration::ServerConfig
             config.load().docker.network.mode.clone()
         };
 
-        let resources = self.convert_container_resources(config);
+        let mut resources = self.convert_container_resources(config);
+        resources.blkio_weight = None; // blkio_weight is cgroup v1 only; fails on cgroup v2
 
         bollard::plugin::ContainerCreateBody {
             exposed_ports: Some(self.convert_allocations_exposed()),
@@ -325,7 +326,7 @@ impl DockerServerConfigurationExt for crate::server::configuration::ServerConfig
             cpu_shares: resources.cpu_shares,
             cpuset_cpus: resources.cpuset_cpus,
             pids_limit: resources.pids_limit,
-            blkio_weight: resources.blkio_weight,
+            blkio_weight: None, // blkio_weight is cgroup v1 only; fails on cgroup v2
             oom_kill_disable: resources.oom_kill_disable,
             ..Default::default()
         }
@@ -605,7 +606,8 @@ impl DockerProcessHandle {
             ..Default::default()
         }));
 
-        let mut attach = docker
+        tracing::debug!(container_id = %container_id, "DockerProcessHandle::new: attaching to container");
+        let mut attach = match docker
             .attach_container(
                 &container_id,
                 Some(bollard::query_parameters::AttachContainerOptions {
@@ -616,7 +618,17 @@ impl DockerProcessHandle {
                     ..Default::default()
                 }),
             )
-            .await?;
+            .await
+        {
+            Ok(a) => {
+                tracing::debug!(container_id = %container_id, "DockerProcessHandle::new: attached to container");
+                a
+            }
+            Err(err) => {
+                tracing::error!(container_id = %container_id, error = %err, "DockerProcessHandle::new: failed to attach to container");
+                return Err(err.into());
+            }
+        };
 
         let stdin_task = tokio::spawn(async move {
             while let Some(data) = stdin_rx.recv().await {
@@ -1212,11 +1224,41 @@ impl super::ServerExecutor for DockerExecutor {
         server: &super::super::Server,
         script: &super::super::installation::InstallationScript,
     ) -> Result<(Arc<dyn super::ProcessHandle>, StatusReceiver), anyhow::Error> {
-        self.pull_image(&script.container_image, server, false)
-            .await?;
+        tracing::debug!(
+            server = %server.uuid,
+            container_image = %script.container_image,
+            entrypoint = %script.entrypoint,
+            script_len = script.script.len(),
+            extra_env_vars = script.environment.len(),
+            "setup_installation_process: starting"
+        );
+
+        tracing::debug!(
+            server = %server.uuid,
+            image = %script.container_image,
+            "setup_installation_process: pulling installer image"
+        );
+        if let Err(err) = self.pull_image(&script.container_image, server, false).await {
+            tracing::error!(
+                server = %server.uuid,
+                image = %script.container_image,
+                error = %err,
+                "setup_installation_process: failed to pull installer image"
+            );
+            return Err(err);
+        }
+        tracing::debug!(server = %server.uuid, image = %script.container_image, "setup_installation_process: image ready");
 
         let server_config = server.configuration.read().await;
-        let resources = server_config.installer_resources(&self.app_config);
+        let mut resources = server_config.installer_resources(&self.app_config);
+        resources.blkio_weight = None; // blkio_weight is cgroup v1 only; fails on cgroup v2
+        tracing::debug!(
+            server = %server.uuid,
+            memory = ?resources.memory,
+            memory_swap = ?resources.memory_swap,
+            cpu_quota = ?resources.cpu_quota,
+            "setup_installation_process: resolved installer resource limits"
+        );
 
         let mut env = server_config.environment(&self.app_config);
         for (k, v) in &script.environment {
@@ -1228,22 +1270,63 @@ impl super::ServerExecutor for DockerExecutor {
                 }
             ));
         }
+        tracing::debug!(server = %server.uuid, env_var_count = env.len(), "setup_installation_process: environment built");
 
         drop(server_config);
 
         let tmp_dir =
             Path::new(&self.app_config.load().system.tmp_directory).join(server.uuid.to_string());
-        tokio::fs::create_dir_all(&tmp_dir).await?;
-        tokio::fs::write(
-            tmp_dir.join("install.sh"),
-            script.script.replace("\r\n", "\n"),
-        )
-        .await?;
+        tracing::debug!(server = %server.uuid, tmp_dir = %tmp_dir.display(), "setup_installation_process: creating tmp directory");
+        if let Err(err) = tokio::fs::create_dir_all(&tmp_dir).await {
+            tracing::error!(
+                server = %server.uuid,
+                tmp_dir = %tmp_dir.display(),
+                error = %err,
+                "setup_installation_process: failed to create tmp directory"
+            );
+            return Err(err.into());
+        }
+
+        let install_script_path = tmp_dir.join("install.sh");
+        tracing::debug!(server = %server.uuid, path = %install_script_path.display(), "setup_installation_process: writing install.sh");
+        if let Err(err) = tokio::fs::write(&install_script_path, script.script.replace("\r\n", "\n")).await {
+            tracing::error!(
+                server = %server.uuid,
+                path = %install_script_path.display(),
+                error = %err,
+                "setup_installation_process: failed to write install.sh"
+            );
+            return Err(err.into());
+        }
+
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            tokio::fs::set_permissions(&tmp_dir, std::fs::Permissions::from_mode(0o755)).await?;
+            tracing::debug!(server = %server.uuid, tmp_dir = %tmp_dir.display(), "setup_installation_process: setting tmp dir permissions to 0o755");
+            if let Err(err) = tokio::fs::set_permissions(&tmp_dir, std::fs::Permissions::from_mode(0o755)).await {
+                tracing::error!(
+                    server = %server.uuid,
+                    tmp_dir = %tmp_dir.display(),
+                    error = %err,
+                    "setup_installation_process: failed to set tmp dir permissions"
+                );
+                return Err(err.into());
+            }
         }
+
+        let container_name = format!("{}_installer", server.uuid);
+        let server_data_dir = server.filesystem.base().to_string();
+        let network_mode = self.app_config.load().docker.network.mode.clone();
+        tracing::debug!(
+            server = %server.uuid,
+            container_name = %container_name,
+            image = %script.container_image,
+            entrypoint = %script.entrypoint,
+            server_data_dir = %server_data_dir,
+            tmp_dir = %tmp_dir.display(),
+            network_mode = %network_mode,
+            "setup_installation_process: creating installer container"
+        );
 
         let bollard_config = bollard::plugin::ContainerCreateBody {
             host_config: Some(bollard::plugin::HostConfig {
@@ -1260,7 +1343,7 @@ impl super::ServerExecutor for DockerExecutor {
                 mounts: Some(vec![
                     bollard::plugin::Mount {
                         typ: Some(bollard::plugin::MountType::BIND),
-                        source: Some(server.filesystem.base().into()),
+                        source: Some(server_data_dir.clone()),
                         target: Some("/mnt/server".to_string()),
                         ..Default::default()
                     },
@@ -1271,7 +1354,7 @@ impl super::ServerExecutor for DockerExecutor {
                         ..Default::default()
                     },
                 ]),
-                network_mode: Some(self.app_config.load().docker.network.mode.clone()),
+                network_mode: Some(network_mode),
                 dns: Some(self.app_config.load().docker.network.dns.clone()),
                 tmpfs: Some(HashMap::from([(
                     "/tmp".to_string(),
@@ -1296,10 +1379,11 @@ impl super::ServerExecutor for DockerExecutor {
                 userns_mode: string_to_option(&self.app_config.load().docker.userns_mode),
                 ..Default::default()
             }),
-            cmd: Some(vec![
-                script.entrypoint.to_string(),
-                "/mnt/install/install.sh".to_string(),
-            ]),
+            entrypoint: Some({
+                let shell = script.entrypoint.split_whitespace().next().unwrap_or("bash");
+                vec![shell.to_string()]
+            }),
+            cmd: Some(vec!["/mnt/install/install.sh".to_string()]),
             hostname: Some("installer".to_string()),
             image: Some(script.container_image.trim_end_matches('~').to_string()),
             env: Some(env),
@@ -1318,28 +1402,71 @@ impl super::ServerExecutor for DockerExecutor {
             ..Default::default()
         };
 
-        let container = self
+        let container = match self
             .docker
             .create_container(
                 Some(bollard::query_parameters::CreateContainerOptions {
-                    name: Some(format!("{}_installer", server.uuid)),
+                    name: Some(container_name.clone()),
                     ..Default::default()
                 }),
                 bollard_config,
             )
-            .await?;
+            .await
+        {
+            Ok(c) => {
+                tracing::debug!(
+                    server = %server.uuid,
+                    container_id = %c.id,
+                    container_name = %container_name,
+                    "setup_installation_process: container created"
+                );
+                c
+            }
+            Err(err) => {
+                tracing::error!(
+                    server = %server.uuid,
+                    container_name = %container_name,
+                    error = %err,
+                    "setup_installation_process: failed to create installer container"
+                );
+                return Err(err.into());
+            }
+        };
 
         let (status_tx, status_rx) = tokio::sync::mpsc::channel(1);
-        let handle = Arc::new(
-            DockerProcessHandle::new(
-                container.id,
-                Arc::clone(&self.docker),
-                server,
-                Arc::clone(&self.app_config),
-                status_tx,
-            )
-            .await?,
+
+        tracing::debug!(
+            server = %server.uuid,
+            container_id = %container.id,
+            "setup_installation_process: attaching to installer container"
         );
+        let handle = match DockerProcessHandle::new(
+            container.id.clone(),
+            Arc::clone(&self.docker),
+            server,
+            Arc::clone(&self.app_config),
+            status_tx,
+        )
+        .await
+        {
+            Ok(h) => {
+                tracing::debug!(
+                    server = %server.uuid,
+                    container_id = %container.id,
+                    "setup_installation_process: attached to installer container successfully"
+                );
+                Arc::new(h)
+            }
+            Err(err) => {
+                tracing::error!(
+                    server = %server.uuid,
+                    container_id = %container.id,
+                    error = %err,
+                    "setup_installation_process: failed to attach to installer container"
+                );
+                return Err(err);
+            }
+        };
 
         Ok((handle, status_rx))
     }
@@ -1418,7 +1545,8 @@ impl super::ServerExecutor for DockerExecutor {
             .await?;
 
         let server_config = server.configuration.read().await;
-        let resources = server_config.installer_resources(&self.app_config);
+        let mut resources = server_config.installer_resources(&self.app_config);
+        resources.blkio_weight = None; // blkio_weight is cgroup v1 only; fails on cgroup v2
 
         let mut env = server_config.environment(&self.app_config);
         for (k, v) in &script.environment {
@@ -1499,10 +1627,11 @@ impl super::ServerExecutor for DockerExecutor {
                 auto_remove: Some(true),
                 ..Default::default()
             }),
-            cmd: Some(vec![
-                script.entrypoint.to_string(),
-                "/mnt/script/script.sh".to_string(),
-            ]),
+            entrypoint: Some({
+                let shell = script.entrypoint.split_whitespace().next().unwrap_or("bash");
+                vec![shell.to_string()]
+            }),
+            cmd: Some(vec!["/mnt/script/script.sh".to_string()]),
             hostname: Some("script".to_string()),
             image: Some(script.container_image.trim_end_matches('~').to_string()),
             env: Some(env),
