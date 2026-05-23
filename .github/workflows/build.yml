@@ -33,7 +33,7 @@ jobs:
             target: riscv64gc-unknown-linux-gnu
           - build: ppc64le-linux
             os: ubuntu-24.04
-            target: blacksmith-2vcpu-ubuntu-2404
+            target: powerpc64le-unknown-linux-gnu
 
     steps:
       - name: Checkout sources
