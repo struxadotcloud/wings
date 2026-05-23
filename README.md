@@ -1,15 +1,25 @@
+<div align="center">
+
 <img src=".github/uploads/logo-white.svg" alt="Struxa Logo" height="64" />
 
 # Struxa Wings
 
-[![Rust](https://shieldcn.dev/badge/rust-stable-orange.svg?logo=rust)](https://www.rust-lang.org/)
-[![License](https://shieldcn.dev/github/license/struxadotcloud/wings.svg)](https://github.com/struxadotcloud/wings/blob/main/LICENSE)
-[![GitHub issues](https://shieldcn.dev/github/issues/struxadotcloud/wings.svg)](https://github.com/struxadotcloud/wings/issues)
-[![GitHub stars](https://shieldcn.dev/github/stars/struxadotcloud/wings.svg)](https://github.com/struxadotcloud/wings/stargazers)
+**The node agent for Struxa.**
+Handles server lifecycle, file management, backups, and SFTP access on each node.
+
+<br />
+
+![GitHub Stars](https://www.shieldcn.dev/github/stars/struxadotcloud/wings.svg?variant=secondary&size=sm)
+![GitHub issues](https://www.shieldcn.dev/github/open-issues/struxadotcloud/wings.svg?variant=secondary&size=sm)
+![License](https://www.shieldcn.dev/github/license/struxadotcloud/wings.svg?variant=secondary&size=sm)
+
+![Language · Rust](https://www.shieldcn.dev/badge/Language-Rust-CE422B.svg?logo=rust&variant=branded&size=sm)
+
+</div>
+
+<br />
 
 > **Fork notice:** This is a fork of [Calagopus Wings](https://github.com/calagopus/wings) maintained for use with [Struxa](https://github.com/struxadotcloud/struxa).
-
-The node agent for [Struxa](https://github.com/struxadotcloud/struxa) — a self-hosted game server management panel. This agent runs on each node and handles server lifecycle, file management, backups, and SFTP access.
 
 Built on a Rust rewrite of [Pterodactyl Wings](https://github.com/pterodactyl/wings), aiming for 100% API compatibility while adding new features and better performance.
 
@@ -18,11 +28,19 @@ Built on a Rust rewrite of [Pterodactyl Wings](https://github.com/pterodactyl/wi
 | Repository | Description |
 |---|---|
 | [struxadotcloud/struxa](https://github.com/struxadotcloud/struxa) | Main panel — web UI, API, database |
-| [struxadotcloud/wings](https://github.com/struxadotcloud/wings) | This repo — node agent (you are here) |
+| [struxadotcloud/wings](https://github.com/struxadotcloud/wings) | This repo — node agent |
+| [struxadotcloud/install](https://github.com/struxadotcloud/install) | One-command installer |
+| [struxadotcloud/docs](https://github.com/struxadotcloud/docs) | Documentation site |
 
 ## Installation
 
-For installation instructions, please refer to the [Struxa documentation](https://docs.struxa.cloud).
+Run on a fresh Linux server (Ubuntu 22.04+ recommended):
+
+```bash
+bash <(curl -fsSL https://install.struxa.cloud)
+```
+
+The installer will optionally set up Wings alongside the panel. For manual installation, see the [documentation](https://docs.struxa.cloud).
 
 <details>
 <summary><strong>Added Config Options</strong> (fork additions over upstream)</summary>
@@ -271,3 +289,13 @@ ignore_panel_wings_upgrades: false
 - add `service-install` command to automatically setup a service for wings
 
 </details>
+
+## License
+
+[Elastic License 2.0 (ELv2)](./LICENSE)
+
+<br />
+
+<div align="center">
+  <sub>Part of the Struxa project.</sub>
+</div>
