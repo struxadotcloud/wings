@@ -297,5 +297,5 @@ ignore_panel_wings_upgrades: false
 <br />
 
 <div align="center">
-  <sub>Part of the Struxa project.</sub>
+  <sub>Copyright (c) The Hosting Company Ltd</sub>
 </div>
