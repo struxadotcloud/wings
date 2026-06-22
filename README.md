@@ -297,5 +297,5 @@ ignore_panel_wings_upgrades: false
 <br />
 
 <div align="center">
-  <sub>Copyright (c) The Hosting Company Ltd</sub>
+  <sub>Copyright (c) Disaster Limited</sub>
 </div>
