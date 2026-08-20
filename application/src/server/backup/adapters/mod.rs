@@ -8,6 +8,7 @@ use utoipa::ToSchema;
 
 pub mod btrfs;
 pub mod ddup_bak;
+pub mod gdrive;
 pub mod kopia;
 pub mod pbs;
 pub mod restic;
@@ -27,6 +28,7 @@ pub enum BackupAdapter {
     Restic,
     ProxmoxBackupServer,
     Kopia,
+    GoogleDrive,
 }
 
 impl BackupAdapter {
@@ -41,6 +43,7 @@ impl BackupAdapter {
             Self::Restic,
             Self::ProxmoxBackupServer,
             Self::Kopia,
+            Self::GoogleDrive,
         ]
     }
 
@@ -55,6 +58,7 @@ impl BackupAdapter {
             Self::Restic => "restic",
             Self::ProxmoxBackupServer => "proxmox-backup-server",
             Self::Kopia => "kopia",
+            Self::GoogleDrive => "google-drive",
         }
     }
 }
@@ -86,6 +90,7 @@ impl BackupAdapter {
                 BackupAdapter::Kopia => {
                     <kopia::KopiaBackup as BackupFindExt>::find(state, uuid).await
                 }
+                BackupAdapter::GoogleDrive => Ok(None),
             }? {
                 return Ok(Some((*adapter, backup)));
             }
@@ -108,6 +113,7 @@ impl BackupAdapter {
             BackupAdapter::Restic => restic::ResticBackup::find(state, uuid).await,
             BackupAdapter::ProxmoxBackupServer => pbs::PbsBackup::find(state, uuid).await,
             BackupAdapter::Kopia => kopia::KopiaBackup::find(state, uuid).await,
+            BackupAdapter::GoogleDrive => gdrive::GoogleDriveBackup::find(state, uuid).await,
         }
     }
 
@@ -147,6 +153,10 @@ impl BackupAdapter {
             BackupAdapter::Kopia => {
                 kopia::KopiaBackup::create(server, uuid, progress, total, ignore, ignore_raw).await
             }
+            BackupAdapter::GoogleDrive => {
+                gdrive::GoogleDriveBackup::create(server, uuid, progress, total, ignore, ignore_raw)
+                    .await
+            }
         }
     }
 
@@ -164,6 +174,7 @@ impl BackupAdapter {
             BackupAdapter::Restic => restic::ResticBackup::clean(server, uuid).await,
             BackupAdapter::ProxmoxBackupServer => pbs::PbsBackup::clean(server, uuid).await,
             BackupAdapter::Kopia => kopia::KopiaBackup::clean(server, uuid).await,
+            BackupAdapter::GoogleDrive => gdrive::GoogleDriveBackup::clean(server, uuid).await,
         }
     }
 }

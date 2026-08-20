@@ -362,6 +362,15 @@ fn system_backup_s3_part_upload_timeout() -> u64 {
 fn system_backup_s3_retry_limit() -> u64 {
     10
 }
+fn system_backup_gdrive_create_threads() -> usize {
+    4
+}
+fn system_backup_gdrive_part_upload_timeout() -> u64 {
+    2 * 60 * 60
+}
+fn system_backup_gdrive_retry_limit() -> u64 {
+    10
+}
 
 fn system_backup_ddup_bak_create_threads() -> usize {
     4
@@ -967,6 +976,16 @@ nestify::nest! {
                     #[serde(default = "system_backup_s3_part_upload_timeout")]
                     pub part_upload_timeout: u64,
                     #[serde(default = "system_backup_s3_retry_limit")]
+                    pub retry_limit: u64,
+                },
+                #[serde(default)]
+                #[schema(inline)]
+                pub gdrive: #[derive(ToSchema, Deserialize, Serialize, DefaultFromSerde)] #[serde(default)] pub struct SystemBackupsGdrive {
+                    #[serde(default = "system_backup_gdrive_create_threads")]
+                    pub create_threads: usize,
+                    #[serde(default = "system_backup_gdrive_part_upload_timeout")]
+                    pub part_upload_timeout: u64,
+                    #[serde(default = "system_backup_gdrive_retry_limit")]
                     pub retry_limit: u64,
                 },
                 #[serde(default)]

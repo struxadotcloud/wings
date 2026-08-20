@@ -29,6 +29,7 @@ pub enum Backup {
     Restic(adapters::restic::ResticBackup),
     ProxmoxBackupServer(adapters::pbs::PbsBackup),
     Kopia(adapters::kopia::KopiaBackup),
+    GoogleDrive(adapters::gdrive::GoogleDriveBackup),
 }
 
 impl Backup {
@@ -42,6 +43,7 @@ impl Backup {
             Backup::Restic(backup) => backup.uuid(),
             Backup::ProxmoxBackupServer(backup) => backup.uuid(),
             Backup::Kopia(backup) => backup.uuid(),
+            Backup::GoogleDrive(backup) => backup.uuid(),
         }
     }
 
@@ -56,6 +58,7 @@ impl Backup {
             Backup::Restic(_) => adapters::BackupAdapter::Restic,
             Backup::ProxmoxBackupServer(_) => adapters::BackupAdapter::ProxmoxBackupServer,
             Backup::Kopia(_) => adapters::BackupAdapter::Kopia,
+            Backup::GoogleDrive(_) => adapters::BackupAdapter::GoogleDrive,
         }
     }
 
@@ -69,6 +72,7 @@ impl Backup {
             Backup::Restic(backup) => backup.download_info().await,
             Backup::ProxmoxBackupServer(backup) => backup.download_info().await,
             Backup::Kopia(backup) => backup.download_info().await,
+            Backup::GoogleDrive(backup) => backup.download_info().await,
         }
     }
 
@@ -89,6 +93,9 @@ impl Backup {
                 backup.download(state, archive_format, range).await
             }
             Backup::Kopia(backup) => backup.download(state, archive_format, range).await,
+            Backup::GoogleDrive(backup) => {
+                backup.download(state, archive_format, range).await
+            }
         }
     }
 
@@ -110,6 +117,9 @@ impl Backup {
                 backup.restore(server, progress, total, download_url).await
             }
             Backup::Kopia(backup) => backup.restore(server, progress, total, download_url).await,
+            Backup::GoogleDrive(backup) => {
+                backup.restore(server, progress, total, download_url).await
+            }
         }
     }
 
@@ -123,6 +133,7 @@ impl Backup {
             Backup::Restic(backup) => backup.delete(state).await,
             Backup::ProxmoxBackupServer(backup) => backup.delete(state).await,
             Backup::Kopia(backup) => backup.delete(state).await,
+            Backup::GoogleDrive(backup) => backup.delete(state).await,
         }
     }
 
@@ -139,6 +150,7 @@ impl Backup {
             Backup::Restic(backup) => backup.browse(server).await,
             Backup::ProxmoxBackupServer(backup) => backup.browse(server).await,
             Backup::Kopia(backup) => backup.browse(server).await,
+            Backup::GoogleDrive(backup) => backup.browse(server).await,
         }
     }
 }
