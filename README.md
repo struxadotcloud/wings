@@ -1,24 +1,49 @@
-![Calagopus Logo](https://calagopus.com/fulllogo.svg)
+<div align="center">
 
-# Calagopus Wings
+<img src=".github/uploads/logo-white.svg" alt="Struxa Logo" height="64" />
 
-[![Rust](https://img.shields.io/badge/rust-stable-orange.svg?logo=rust)](https://www.rust-lang.org/)
-[![License](https://img.shields.io/github/license/calagopus/wings?color=blue)](https://github.com/calagopus/wings/blob/main/LICENSE)
-[![GitHub issues](https://img.shields.io/github/issues/calagopus/wings)](https://github.com/calagopus/wings/issues)
-[![GitHub stars](https://img.shields.io/github/stars/calagopus/wings)](https://github.com/calagopus/wings/stargazers)
-[![Discord](https://img.shields.io/discord/1429911351777824892?label=discord&logo=discord&color=5865F2)](https://discord.gg/uSM8tvTxBV)
+# Struxa Wings
 
-A rewrite of [Pterodactyl Wings](https://github.com/pterodactyl/wings) in the Rust programming language. This rewrite aims to be 100% API compatible while implementing new features, better performance and more stability.
+**The node agent for Struxa.**
+Handles server lifecycle, file management, backups, and SFTP access on each node.
 
-[Todo](https://notes.rjns.dev/workspace/cb7ccae8-0508-4f90-9161-d1e69b0ca8f0/uAVAL7iHSQpDk1SiSUPL1)
+<br />
+
+![GitHub Stars](https://www.shieldcn.dev/github/stars/struxadotcloud/wings.svg?variant=secondary&size=sm)
+![GitHub issues](https://www.shieldcn.dev/github/open-issues/struxadotcloud/wings.svg?variant=secondary&size=sm)
+![License](https://www.shieldcn.dev/github/license/struxadotcloud/wings.svg?variant=secondary&size=sm)
+
+![Language · Rust](https://www.shieldcn.dev/badge/Language-Rust-CE422B.svg?logo=rust&variant=branded&size=sm)
+
+</div>
+
+<br />
+
+> **Fork notice:** This is a fork of [Calagopus Wings](https://github.com/calagopus/wings) maintained for use with [Struxa](https://github.com/struxadotcloud/struxa).
+
+Built on a Rust rewrite of [Pterodactyl Wings](https://github.com/pterodactyl/wings), aiming for 100% API compatibility while adding new features and better performance.
+
+## Related repositories
+
+| Repository | Description |
+|---|---|
+| [struxadotcloud/struxa](https://github.com/struxadotcloud/struxa) | Main panel — web UI, API, database |
+| [struxadotcloud/wings](https://github.com/struxadotcloud/wings) | This repo — node agent |
+| [struxadotcloud/install](https://github.com/struxadotcloud/install) | One-command installer |
+| [struxadotcloud/docs](https://github.com/struxadotcloud/docs) | Documentation site |
 
 ## Installation
 
-For installation instructions, please refer to the [Docs](https://calagopus.com/docs/wings/installation).
+Run on a fresh Linux server (Ubuntu 22.04+ recommended):
 
-## Added Config Options
+```bash
+bash <(curl -fsSL https://install.struxa.cloud)
+```
 
-[Read full Config Reference](https://calagopus.com/docs/wings/configuration)
+The installer will optionally set up Wings alongside the panel. For manual installation, see the [documentation](https://docs.struxa.cloud).
+
+<details>
+<summary><strong>Added Config Options</strong> (fork additions over upstream)</summary>
 
 ```yml
 api:
@@ -68,7 +93,7 @@ system:
   # none, btrfs_subvolume, zfs_dataset, xfs_quota, (experimental) fuse_quota
   disk_limiter_mode: none
   # use inotify to selectively rescan disk usage instead of forcing full rescans
-  disk_check_use_inotify: true
+  system_disk_check_use_inotify: true
 
   # use multiple threads to run chown on server startup
   check_permissions_on_boot_threads: 4
@@ -93,14 +118,6 @@ system:
       # how long in seconds to cooldown after reaching max authentication attempts (if 0, no cooldown is applied)
       # the cooldown is a sliding window, so if you make 3 failed attempts in 1 minute, you will have to wait 60 seconds from the last attempt
       authentication_cooldown: 60
-      # how many concurrent connections a single user can have
-      max_connections_per_user: 10
-      # how many concurrent channels a single connection can have
-      max_channels_per_connection: 10
-      # how many concurrent open handles a single channel can have
-      max_handles_per_channel: 32
-      # how many concurrent open handles a single server can have
-      max_handles_total: 1024
 
     shell:
       # whether to enable the wings remote shell (allows server management over ssh)
@@ -115,16 +132,6 @@ system:
       log_logins: false
       # whether to log file read actions in server activity
       log_file_reads: false
-
-  file_history:
-    enabled: true
-    zstd_level: 19
-    anchor_interval: 4
-    keep_chains: 2
-    file_size_cap: 1048576
-    per_file_disk_budget: 5242880
-    per_server_disk_budget: 209715200
-    maintenance_interval: 3600
 
   backups:
     # what compression level to use? best_speed, good_speed, good_compression, best_compression (higher compression = more CPU usage, better compression)
@@ -187,13 +194,6 @@ system:
       # how many threads to use when restoring a zfs backup (snapshot)
       restore_threads: 4
 
-    # settings for the pbs backup driver
-    pbs:
-      # how many threads to use when creating a pbs backup
-      create_threads: 4
-      # how many download streams to use when restoring a pbs backup
-      download_concurrency: 4
-
 docker:
   # the docker-compatible socket or http address to connect to
   socket: /var/run/docker.sock
@@ -205,20 +205,6 @@ docker:
   network:
     # whether to disable binding to a specific ip
     disable_interface_binding: false
-
-    interfaces:
-      v4:
-        # whether to enable ipv4 support for the docker network
-        enabled: true
-      v6:
-        # whether to enable ipv6 support for the docker network
-        enabled: true
-
-  registry_image_fetch_cache:
-    # whether to enable caching of docker registry image fetches (pulls)
-    enabled: true
-    # how long in seconds to cache docker registry image fetches (pulls)
-    duration: 300
 
   installer_limits:
     # how long in seconds to wait until an install container is considered failed, 0 means no limit
@@ -234,7 +220,10 @@ remote_query:
 ignore_panel_wings_upgrades: false
 ```
 
-## Added Features
+</details>
+
+<details>
+<summary><strong>Added Features</strong> (fork additions over upstream)</summary>
 
 ### API
 
@@ -284,7 +273,6 @@ ignore_panel_wings_upgrades: false
 - add support for the [fsync@openssh.com](https://github.com/openssh/openssh-portable/blob/5f98660c51e673f521e0216c7ed20205c4af10ed/PROTOCOL#L494) SFTP extension
 - add support for the [lsetstat@openssh.com](https://github.com/openssh/openssh-portable/blob/5f98660c51e673f521e0216c7ed20205c4af10ed/PROTOCOL#L508) SFTP extension
 - add support for the [users-groups-by-id@openssh.com](https://github.com/openssh/openssh-portable/blob/5f98660c51e673f521e0216c7ed20205c4af10ed/PROTOCOL#L643) SFTP extension
-- add support for the [posix-rename@openssh.com](https://github.com/openssh/openssh-portable/blob/5f98660c51e673f521e0216c7ed20205c4af10ed/PROTOCOL#L420) SFTP extension
 - properly support egg `file_denylist`
 
 ### Backups
@@ -299,15 +287,15 @@ ignore_panel_wings_upgrades: false
 ### CLI
 
 - add `service-install` command to automatically setup a service for wings
-- add `migrate-disk-limiter` command to migrate to btrfs/zfs disk limiter without needing to do a transfer for each server
 
-## Star History
+</details>
 
-## Star History
+## License
 
-![Star History Chart](https://api.star-history.com/chart?repos=calagopus/wings&type=date&legend=top-left&sealed_token=B2O-QGHUHAa_2R6TXAtmVmA-ASHkIyhBD3Rm6jlD9mOeO9XJsHW0uBvsZ-5zINucUHJPH5c29w8c7lL_2Kr7tb5770-KK58lG2pGrET0ksegRMrP1IEbft05EdOtyO6RAUCo1FCK5gnNscF6lwXhRp5LLQd08n2sZgUisdnct1irxGRvQmzUx9o-Bk4o)
+[Elastic License 2.0 (ELv2)](./LICENSE)
+
+<br />
 
 <div align="center">
   <sub>Copyright (c) Disaster Limited</sub>
 </div>
-
