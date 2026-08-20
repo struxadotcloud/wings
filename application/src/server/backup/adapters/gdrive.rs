@@ -99,15 +99,18 @@ impl GoogleDriveBackup {
     ) -> Result<String, anyhow::Error> {
         static TOKEN_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
+        let body = url::form_urlencoded::Serializer::new(String::new())
+            .append_pair("client_id", &config.client_id)
+            .append_pair("client_secret", &config.client_secret)
+            .append_pair("refresh_token", &config.refresh_token)
+            .append_pair("grant_type", "refresh_token")
+            .finish();
+
         let response: TokenResponse = TOKEN_CLIENT
             .get_or_init(reqwest::Client::new)
             .post(GDRIVE_TOKEN_URL)
-            .form(&[
-                ("client_id", config.client_id.as_str()),
-                ("client_secret", config.client_secret.as_str()),
-                ("refresh_token", config.refresh_token.as_str()),
-                ("grant_type", "refresh_token"),
-            ])
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .body(body)
             .send()
             .await?
             .error_for_status()
@@ -658,7 +661,7 @@ impl BackupExt for GoogleDriveBackup {
         else {
             return Ok(());
         };
-        let Some(file_id) = config.file_id else {
+        let Some(file_id) = config.file_id.as_deref() else {
             return Ok(());
         };
 

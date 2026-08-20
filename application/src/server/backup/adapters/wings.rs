@@ -313,6 +313,7 @@ impl BackupCreateExt for WingsBackup {
             ),
             streaming: false,
             parts: vec![],
+            remote_id: None,
         })
     }
 }

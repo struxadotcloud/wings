@@ -777,6 +777,7 @@ impl BackupCreateExt for ResticBackup {
             browsable: true,
             streaming: true,
             parts: vec![],
+            remote_id: None,
         })
     }
 }

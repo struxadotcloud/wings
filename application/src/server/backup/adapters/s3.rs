@@ -480,6 +480,7 @@ impl S3Backup {
             browsable: false,
             streaming: false,
             parts,
+            remote_id: None,
         })
     }
 
@@ -727,6 +728,7 @@ impl S3Backup {
             browsable: false,
             streaming: false,
             parts,
+            remote_id: None,
         })
     }
 }
