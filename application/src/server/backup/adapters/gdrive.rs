@@ -113,8 +113,7 @@ impl GoogleDriveBackup {
             .body(body)
             .send()
             .await?
-            .error_for_status()
-            .await?
+            .error_for_status()?
             .json()
             .await?;
 
