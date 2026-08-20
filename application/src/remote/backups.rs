@@ -22,6 +22,8 @@ pub struct RawServerBackup {
     pub browsable: bool,
     pub streaming: bool,
     pub parts: Vec<RawServerBackupPart>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_id: Option<String>,
 }
 
 #[derive(Debug, Clone, ToSchema, Deserialize)]
@@ -86,6 +88,17 @@ impl KopiaBackupConfiguration {
             .map(str::trim)
             .filter(|fingerprint| !fingerprint.is_empty())
     }
+}
+
+#[derive(Debug, Clone, ToSchema, Deserialize)]
+pub struct GDriveBackupConfiguration {
+    pub access_token: String,
+    pub refresh_token: String,
+    pub client_id: String,
+    pub client_secret: String,
+    pub folder_id: String,
+    #[serde(default)]
+    pub file_id: Option<String>,
 }
 
 pub async fn set_backup_status(
@@ -246,6 +259,25 @@ pub async fn backup_kopia_configuration(
         client
             .client
             .get(format!("{}/backups/{}/kopia", client.url, uuid))
+            .send()
+            .await?
+            .error_for_remote_status()
+            .await?
+            .text()
+            .await?,
+    )?;
+
+    Ok(response)
+}
+
+pub async fn backup_gdrive_configuration(
+    client: &Client,
+    uuid: uuid::Uuid,
+) -> Result<GDriveBackupConfiguration, anyhow::Error> {
+    let response: GDriveBackupConfiguration = super::into_json(
+        client
+            .client
+            .get(format!("{}/backups/{}/gdrive", client.url, uuid))
             .send()
             .await?
             .error_for_remote_status()

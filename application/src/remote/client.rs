@@ -384,6 +384,16 @@ impl Client {
     }
 
     #[tracing::instrument(skip(self))]
+    pub async fn backup_gdrive_configuration(
+        &self,
+        uuid: uuid::Uuid,
+    ) -> Result<super::backups::GDriveBackupConfiguration, anyhow::Error> {
+        tracing::info!("getting google drive backup configuration");
+
+        super::backups::backup_gdrive_configuration(self, uuid).await
+    }
+
+    #[tracing::instrument(skip(self))]
     pub async fn create_backup(
         &self,
         server: uuid::Uuid,
