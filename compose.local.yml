@@ -15,15 +15,15 @@ services:
       - "/var/lib/docker/containers/:/var/lib/docker/containers/"
       # this is exclusively for the main wings configuration file, called config.yml
       - "./config/:/etc/pterodactyl/"
-      # if you split /var/lib/calagopus-wings up, make sure the following paths are all still covered by a volume:
-      # /var/lib/calagopus-wings/volumes (used for storing server files)
-      # /var/lib/calagopus-wings/diffs (used for storing file history diffs)
-      # /var/lib/calagopus-wings/vmounts (used for storing temporary mountpoints, DO NOT put this on a tmpfs, thats why its separate)
-      # /var/lib/calagopus-wings/archives (unused for wings-rs currently, may get a future use)
-      # /var/lib/calagopus-wings/backups (used for storing local backups of servers)
-      - "/var/lib/calagopus-wings/:/var/lib/calagopus-wings/"
-      - "./logs/:/var/log/calagopus-wings/"
-      - "/tmp/calagopus-wings/:/tmp/calagopus-wings/"
+      # if you split /var/lib/pterodactyl up, make sure the following paths are all still covered by a volume:
+      # /var/lib/pterodactyl/volumes (used for storing server files)
+      # /var/lib/pterodactyl/diffs (used for storing file history diffs)
+      # /var/lib/pterodactyl/vmounts (used for storing temporary mountpoints, DO NOT put this on a tmpfs, thats why its separate)
+      # /var/lib/pterodactyl/archives (unused for wings-rs currently, may get a future use)
+      # /var/lib/pterodactyl/backups (used for storing local backups of servers)
+      - "/var/lib/pterodactyl/:/var/lib/pterodactyl/"
+      - "./logs/:/var/log/pterodactyl/"
+      - "/tmp/pterodactyl/:/tmp/pterodactyl/"
       # do not mount directly to /etc/ssl/certs (right side), this will cause certificate issues within the container
       - "/etc/ssl/certs/wings/:/etc/ssl/certs/wings/:ro"
     ports:

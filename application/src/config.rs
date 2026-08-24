@@ -101,7 +101,7 @@ fn api_max_jwt_uses() -> usize {
 fn system_root_directory() -> SystemPath {
     #[cfg(unix)]
     {
-        SystemPath::new("/var/lib/calagopus-wings")
+        SystemPath::new("/var/lib/pterodactyl")
     }
     #[cfg(windows)]
     {
@@ -111,7 +111,7 @@ fn system_root_directory() -> SystemPath {
 fn system_log_directory() -> SystemPath {
     #[cfg(unix)]
     {
-        SystemPath::new("/var/log/calagopus-wings")
+        SystemPath::new("/var/log/pterodactyl")
     }
     #[cfg(windows)]
     {
@@ -171,7 +171,7 @@ fn system_backup_directory() -> SystemPath {
 fn system_tmp_directory() -> SystemPath {
     #[cfg(unix)]
     {
-        SystemPath::new("/tmp/calagopus-wings")
+        SystemPath::new("/tmp/pterodactyl")
     }
     #[cfg(windows)]
     {
@@ -196,7 +196,7 @@ fn system_timezone() -> compact_str::CompactString {
 }
 #[cfg(unix)]
 fn system_passwd_directory() -> SystemPath {
-    SystemPath::new("/run/calagopus-wings/etc")
+    SystemPath::new("/run/pterodactyl/etc")
 }
 #[cfg(unix)]
 fn system_machine_id_enabled() -> bool {
