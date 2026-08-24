@@ -14,7 +14,7 @@ services:
       - "/var/run/docker.sock:/var/run/docker.sock"
       - "/var/lib/docker/containers/:/var/lib/docker/containers/"
       # this is exclusively for the main wings configuration file, called config.yml
-      - "/etc/calagopus-wings/:/etc/calagopus-wings/"
+      - "/etc/pterodactyl/:/etc/pterodactyl/"
       # if you split /var/lib/calagopus-wings up, make sure the following paths are all still covered by a volume:
       # /var/lib/calagopus-wings/volumes (used for storing server files)
       # /var/lib/calagopus-wings/diffs (used for storing file history diffs)
