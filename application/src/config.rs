@@ -1369,17 +1369,18 @@ pub struct Config {
 }
 
 impl Config {
+    // ponytail: struxa keeps configs in /etc/pterodactyl, upstream moved to /etc/calagopus-wings
     #[cfg(unix)]
-    pub const DEFAULT_PATH: &'static str = "/etc/calagopus-wings/config.yml";
+    pub const DEFAULT_PATH: &'static str = "/etc/pterodactyl/config.yml";
     #[cfg(windows)]
     pub const DEFAULT_PATH: &'static str = "C:\\ProgramData\\Calagopus-Wings\\config.yml";
 
     pub fn find() -> Option<&'static str> {
         let paths = [
             #[cfg(unix)]
-            "/etc/calagopus-wings/config.yml",
-            #[cfg(unix)]
             "/etc/pterodactyl/config.yml",
+            #[cfg(unix)]
+            "/etc/calagopus-wings/config.yml",
             #[cfg(unix)]
             "/etc/pelican/config.yml",
             #[cfg(windows)]
