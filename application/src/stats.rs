@@ -7,6 +7,7 @@ use utoipa::ToSchema;
 struct SystemCpuStats {
     used: f32,
     threads: usize,
+    cores: usize,
     model: String,
 }
 
@@ -26,7 +27,23 @@ struct SystemNetworkStats {
 struct SystemMemoryStats {
     used: u64,
     used_process: u64,
+    available: u64,
     total: u64,
+    #[schema(inline)]
+    swap: SystemSwapStats,
+}
+
+#[derive(ToSchema, Serialize, Default)]
+struct SystemSwapStats {
+    used: u64,
+    total: u64,
+}
+
+#[derive(ToSchema, Serialize, Default)]
+struct SystemLoadAvgStats {
+    one: f64,
+    five: f64,
+    fifteen: f64,
 }
 
 #[derive(ToSchema, Serialize, Default)]
@@ -49,6 +66,13 @@ pub struct SystemStats {
     memory: SystemMemoryStats,
     #[schema(inline)]
     disk: SystemDiskStats,
+    #[schema(inline)]
+    load_average: SystemLoadAvgStats,
+    uptime_seconds: u64,
+    version: String,
+    os: String,
+    architecture: String,
+    kernel_version: String,
 }
 
 pub struct StatsManager {
@@ -72,7 +96,7 @@ impl Default for StatsManager {
             move || {
                 let refresh_kind = sysinfo::RefreshKind::nothing()
                     .with_cpu(sysinfo::CpuRefreshKind::nothing().with_cpu_usage())
-                    .with_memory(sysinfo::MemoryRefreshKind::nothing().with_ram());
+                    .with_memory(sysinfo::MemoryRefreshKind::nothing().with_ram().with_swap());
 
                 let mut sys = System::new_with_specifics(refresh_kind);
                 let mut disks = Disks::new_with_refreshed_list();
@@ -82,6 +106,8 @@ impl Default for StatsManager {
                     .cpus()
                     .first()
                     .map_or_else(|| "unknown".to_string(), |cpu| cpu.brand().to_string());
+
+                let kernel_version = System::kernel_long_version();
 
                 loop {
                     std::thread::sleep(std::time::Duration::from_millis(500));
@@ -109,6 +135,11 @@ impl Default for StatsManager {
 
                     let total_memory = sys.total_memory();
                     let used_memory = sys.used_memory();
+                    let available_memory = sys.available_memory();
+                    let used_swap = sys.used_swap();
+                    let total_swap = sys.total_swap();
+
+                    let load_average = System::load_average();
 
                     let disk = match disks.iter().find(|d| d.mount_point() == Path::new("/")) {
                         Some(d) => d,
@@ -152,13 +183,19 @@ impl Default for StatsManager {
                         cpu: SystemCpuStats {
                             used: cpu_usage,
                             threads: cpu_threads,
+                            cores: System::physical_core_count().unwrap_or(cpu_threads),
                             model: cpu_model.clone(),
                         },
                         network,
                         memory: SystemMemoryStats {
                             used: used_memory,
                             used_process: used_memory_process,
+                            available: available_memory,
                             total: total_memory,
+                            swap: SystemSwapStats {
+                                used: used_swap,
+                                total: total_swap,
+                            },
                         },
                         disk: SystemDiskStats {
                             used: used_disk_space,
@@ -168,6 +205,16 @@ impl Default for StatsManager {
                             written: total_disk_write,
                             writing_rate: disk_write_rate,
                         },
+                        load_average: SystemLoadAvgStats {
+                            one: load_average.one,
+                            five: load_average.five,
+                            fifteen: load_average.fifteen,
+                        },
+                        uptime_seconds: System::uptime(),
+                        version: env!("CARGO_PKG_VERSION").to_string(),
+                        os: std::env::consts::OS.to_string(),
+                        architecture: std::env::consts::ARCH.to_string(),
+                        kernel_version: kernel_version.clone(),
                     }));
                 }
             }
