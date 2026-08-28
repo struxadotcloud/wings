@@ -1,7 +1,7 @@
 use super::State;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
-mod ws;
+pub mod ws;
 
 mod get {
     use crate::{
@@ -31,6 +31,5 @@ mod get {
 pub fn router(state: &State) -> OpenApiRouter<State> {
     OpenApiRouter::new()
         .routes(routes!(get::route))
-        .nest("/ws", ws::router(state))
         .with_state(state.clone())
 }

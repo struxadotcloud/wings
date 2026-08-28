@@ -1,26 +1,134 @@
-use super::State;
-use crate::routes::GetState;
+use crate::{
+    routes::GetState,
+    server::{
+        permissions::Permission,
+        websocket::{WebsocketEvent, WebsocketJwtPayload, WebsocketMessage},
+    },
+};
 use axum::{
     body::Bytes,
     extract::{WebSocketUpgrade, ws::Message},
     response::Response,
-    routing::any,
+};
+use futures::{
+    SinkExt, StreamExt,
+    stream::SplitSink,
 };
 use std::{pin::Pin, sync::Arc};
-use utoipa_axum::router::OpenApiRouter;
+use tokio::sync::Notify;
+
+type Sender = tokio::sync::Mutex<SplitSink<axum::extract::ws::WebSocket, Message>>;
+
+async fn send_message(sender: &Sender, message: WebsocketMessage) -> anyhow::Result<()> {
+    let json = serde_json::to_string(&message)?;
+    sender.lock().await.send(Message::Text(json.into())).await?;
+    Ok(())
+}
 
 pub async fn handle_ws(ws: WebSocketUpgrade, state: GetState) -> Response {
     ws.on_upgrade(move |socket| async move {
-        let socket = Arc::new(tokio::sync::Mutex::new(socket));
+        let (sender, mut receiver) = socket.split();
+        let sender = Arc::new(Sender::new(sender));
+        let authenticated = Arc::new(Notify::new());
 
         type ReturnType = dyn Future<Output = Result<(), anyhow::Error>> + Send;
-        let futures: [Pin<Box<ReturnType>>; 2] = [
+        let futures: [Pin<Box<ReturnType>>; 3] = [
+            // Authentication listener
+            Box::pin({
+                let state = Arc::clone(&state);
+                let sender = Arc::clone(&sender);
+                let authenticated = Arc::clone(&authenticated);
+
+                async move {
+                    loop {
+                        let message = receiver.next().await;
+
+                        match message {
+                            Some(Ok(Message::Text(text))) => {
+                                let message: WebsocketMessage =
+                                    match serde_json::from_str(&text) {
+                                        Ok(message) => message,
+                                        Err(_) => continue,
+                                    };
+
+                                if !matches!(message.event, WebsocketEvent::Authentication) {
+                                    continue;
+                                }
+
+                                let token = message.args.first().map_or("", |v| v.as_str());
+
+                                match state
+                                    .config
+                                    .jwt
+                                    .verify::<WebsocketJwtPayload>(token)
+                                {
+                                    Ok(jwt) => {
+                                        if let Err(err) =
+                                            jwt.base.validate(&state.config.jwt, Some("websocket"))
+                                        {
+                                            send_message(
+                                                &sender,
+                                                WebsocketMessage::builder(WebsocketEvent::JwtError)
+                                                    .arg(format!("invalid token: {err}"))
+                                                    .build(),
+                                            )
+                                            .await?;
+                                            continue;
+                                        }
+
+                                        if !jwt
+                                            .permissions
+                                            .has_permission(Permission::WebsocketConnect)
+                                        {
+                                            send_message(
+                                                &sender,
+                                                WebsocketMessage::builder(WebsocketEvent::JwtError)
+                                                    .arg("missing permission to connect to websocket")
+                                                    .build(),
+                                            )
+                                            .await?;
+                                            continue;
+                                        }
+
+                                        authenticated.notify_one();
+
+                                        send_message(
+                                            &sender,
+                                            WebsocketMessage::builder(
+                                                WebsocketEvent::AuthenticationSuccess,
+                                            )
+                                            .build(),
+                                        )
+                                        .await?;
+                                    }
+                                    Err(err) => {
+                                        send_message(
+                                            &sender,
+                                            WebsocketMessage::builder(WebsocketEvent::JwtError)
+                                                .arg(format!("failed to verify jwt: {err}"))
+                                                .build(),
+                                        )
+                                        .await?;
+                                    }
+                                }
+                            }
+                            Some(Ok(_)) => continue,
+                            Some(Err(_)) | None => {
+                                return Err(anyhow::anyhow!("socket closed"));
+                            }
+                        }
+                    }
+                }
+            }),
             // Stats Listener
             Box::pin({
                 let state = Arc::clone(&state);
-                let socket = Arc::clone(&socket);
+                let sender = Arc::clone(&sender);
+                let authenticated = Arc::clone(&authenticated);
 
                 async move {
+                    authenticated.notified().await;
+
                     loop {
                         let stats = state.stats_manager.get_stats();
                         let stats_json = match serde_json::to_string(&*stats) {
@@ -31,7 +139,7 @@ pub async fn handle_ws(ws: WebSocketUpgrade, state: GetState) -> Response {
                             }
                         };
 
-                        socket
+                        sender
                             .lock()
                             .await
                             .send(Message::Text(stats_json.into()))
@@ -46,7 +154,7 @@ pub async fn handle_ws(ws: WebSocketUpgrade, state: GetState) -> Response {
                 loop {
                     tokio::time::sleep(std::time::Duration::from_secs(30)).await;
 
-                    socket
+                    sender
                         .lock()
                         .await
                         .send(Message::Ping(Bytes::from_static(&[1, 2, 3])))
@@ -59,10 +167,4 @@ pub async fn handle_ws(ws: WebSocketUpgrade, state: GetState) -> Response {
             tracing::debug!("error while serving stats websocket: {:?}", err);
         }
     })
-}
-
-pub fn router(state: &State) -> OpenApiRouter<State> {
-    OpenApiRouter::new()
-        .route("/", any(handle_ws))
-        .with_state(state.clone())
 }

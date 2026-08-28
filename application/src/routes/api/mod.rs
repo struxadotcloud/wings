@@ -89,5 +89,9 @@ pub fn router(state: &State) -> OpenApiRouter<State> {
             "/servers/{server}/ws",
             any(crate::server::websocket::handler::handle_ws),
         )
+        .route(
+            "/system/stats/ws",
+            any(crate::routes::api::system::stats::ws::handle_ws),
+        )
         .with_state(state.clone())
 }
