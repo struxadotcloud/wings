@@ -1,6 +1,6 @@
 services:
   wings:
-    image: ghcr.io/calagopus/wings:latest
+    image: ghcr.io/struxadotcloud/wings:latest
     restart: unless-stopped
     environment:
       TZ: "Europe/Berlin"
