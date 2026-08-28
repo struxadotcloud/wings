@@ -5,7 +5,7 @@ mod config;
 mod logs;
 mod overview;
 mod restic;
-mod stats;
+pub mod stats;
 mod upgrade;
 
 mod get {
